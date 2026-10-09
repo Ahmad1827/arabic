@@ -18,6 +18,10 @@ Texts you paste and hadith are explained word by word by an AI. The app ships wi
 
 Nothing is sent to the AI until you press "Translate and explain" under a sentence or "Translate this page" (automatic translation can be switched on in Settings). Keys are stored only in `data/app.db` on your computer. The Quran, the alphabet trainer and reviewing work without any AI.
 
+## Translate a picture
+
+The **Translate a picture** page takes a dropped, chosen or pasted picture (a sign, a book page, a screenshot), reads the Arabic in it and translates it. Reading is done by your AI, which is the accurate way, or by the built-in recogniser if you prefer to keep the picture on your computer. The picture is kept next to the text so you can compare.
+
 ## How it is built
 
 - `server.js`: web server and API. Data lives in `data/app.db` (SQLite).

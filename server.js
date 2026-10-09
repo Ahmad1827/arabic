@@ -1,6 +1,6 @@
 import express from "express";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +10,7 @@ if (existsSync(path.join(here, ".env"))) process.loadEnvFile(path.join(here, ".e
 const { openDb } = await import("./src/db.js");
 const { splitSentences, tokenize } = await import("./src/text.js");
 const { schedule, newCardState, GRADES } = await import("./src/srs.js");
-const { analyzeSentence, checkConfig, AnalysisError, MODES } = await import("./src/analyze.js");
+const { analyzeSentence, readPicture, checkConfig, AnalysisError, MODES } = await import("./src/analyze.js");
 const { streaks } = await import("./src/streak.js");
 const { TRAINER_LETTERS } = await import("./public/letters.js");
 const library = await import("./src/library.js");
@@ -25,6 +25,7 @@ const DEFAULT_GOAL = 10;
 
 const db = openDb(process.env.DB_PATH || path.join(here, "data", "app.db"));
 const dataDir = path.dirname(process.env.DB_PATH || path.join(here, "data", "app.db"));
+const picturesDir = path.join(dataDir, "pictures");
 const app = express();
 app.use(express.json({ limit: "200kb" }));
 app.use(express.static(path.join(here, "public")));
@@ -175,26 +176,43 @@ app.post("/api/documents", express.raw({ type: () => true, limit: "40mb" }), (re
   if (!(mode in MODES)) throw new HttpError(400, "Choose which kind of Arabic this is.");
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, "The file is empty.");
 
+  const name = String(req.query.name || "document");
+  const picture = documents.isPicture(name);
+  const withAi = picture && req.query.read === "ai";
   const id = String(nextJobId++);
-  const job = { state: "working", stage: "reading", page: 0, pages: 0 };
+  const job = { state: "working", stage: withAi ? "ai" : "reading", page: 0, pages: 0 };
   documentJobs.set(id, job);
-  documents
-    .readDocument(String(req.query.name || "document"), req.body, {
-      cacheDir: path.join(dataDir, "ocr"),
-      onProgress: (progress) => Object.assign(job, progress),
-    })
-    .then((document) => {
-      if (document.body.length > MAX_DOCUMENT_CHARS) {
-        throw new HttpError(413, `This document is too long to open in one piece (${document.body.length.toLocaleString()} characters; the limit is ${MAX_DOCUMENT_CHARS.toLocaleString()}). Split it into parts.`);
-      }
-      const title = String(req.query.title || "").trim() || document.title;
-      const { lastInsertRowid } = db
-        .prepare("INSERT INTO texts (title, mode, body, created_at, source) VALUES (?, ?, ?, ?, ?)")
-        .run(title, mode, document.body, Date.now(), document.source);
-      Object.assign(job, { state: "done", textId: Number(lastInsertRowid) });
-    })
+
+  const read = async () => {
+    const jpeg = picture ? await documents.preparePicture(req.body) : null;
+    const document = withAi
+      // A picture can be read by the person's own AI, which is far more accurate than the built-in recogniser.
+      ? documents.tidyDocument(name, await readPicture({ jpeg, config: getAi() }), "picture, read by your AI")
+      : await documents.readDocument(name, req.body, {
+          cacheDir: path.join(dataDir, "ocr"),
+          onProgress: (progress) => Object.assign(job, progress),
+        });
+    if (document.body.length > MAX_DOCUMENT_CHARS) {
+      throw new HttpError(413, `This document is too long to open in one piece (${document.body.length.toLocaleString()} characters; the limit is ${MAX_DOCUMENT_CHARS.toLocaleString()}). Split it into parts.`);
+    }
+    const title = String(req.query.title || "").trim() || document.title;
+    const textId = Number(
+      db.prepare("INSERT INTO texts (title, mode, body, created_at, source) VALUES (?, ?, ?, ?, ?)").run(title, mode, document.body, Date.now(), document.source)
+        .lastInsertRowid,
+    );
+    if (jpeg) {
+      // The picture is kept so the text can be checked against it.
+      mkdirSync(picturesDir, { recursive: true });
+      writeFileSync(path.join(picturesDir, `${textId}.jpg`), jpeg);
+      db.prepare("UPDATE texts SET picture = ? WHERE id = ?").run(`${textId}.jpg`, textId);
+    }
+    return textId;
+  };
+
+  read()
+    .then((textId) => Object.assign(job, { state: "done", textId }))
     .catch((err) => {
-      const expected = err instanceof HttpError || err instanceof documents.DocumentError;
+      const expected = [HttpError, documents.DocumentError, AnalysisError].some((kind) => err instanceof kind);
       if (!expected) console.error(err);
       Object.assign(job, { state: "failed", error: expected ? err.message : "Something went wrong while reading the file." });
     })
@@ -230,12 +248,21 @@ app.get("/api/texts/:id", async (req, res) => {
     mode: text.mode,
     translation: text.translation,
     source: text.source,
+    picture: Boolean(text.picture),
     surah,
     sentences,
   });
 });
 
+app.get("/api/texts/:id/picture", (req, res) => {
+  const text = getText(req.params.id);
+  if (!text.picture) throw new HttpError(404, "This text has no picture.");
+  res.sendFile(path.join(picturesDir, path.basename(text.picture)));
+});
+
 app.delete("/api/texts/:id", (req, res) => {
+  const picture = db.prepare("SELECT picture FROM texts WHERE id = ?").get(Number(req.params.id))?.picture;
+  if (picture) rmSync(path.join(picturesDir, path.basename(picture)), { force: true });
   db.prepare("DELETE FROM texts WHERE id = ?").run(Number(req.params.id));
   res.status(204).end();
 });

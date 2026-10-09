@@ -89,6 +89,7 @@ export function openDb(file) {
     by_line: "INTEGER NOT NULL DEFAULT 0", // 1 = every line is one sentence
     translation: "TEXT",                  // published translation of the whole text
     source: "TEXT",                       // where the text comes from
+    picture: "TEXT",                      // file name of the picture it was read from
   };
   for (const [name, type] of Object.entries(added)) {
     if (!columns.has(name)) db.exec(`ALTER TABLE texts ADD COLUMN ${name} ${type}`);
