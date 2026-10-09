@@ -6,6 +6,7 @@
 // order, the shapes are turned back into ordinary letters, and lines are
 // rejoined into paragraphs.
 
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 export class DocumentError extends Error {
@@ -246,7 +247,9 @@ const MAX_SCAN_PAGES = 300;
 async function startRecogniser(cacheDir) {
   const { createWorker } = await import("tesseract.js");
   try {
-    return await createWorker("ara", 1, { cachePath: cacheDir });
+    // Without a folder of its own, the language data would land in whatever
+    // folder the app was started from.
+    return await createWorker("ara", 1, { cachePath: cacheDir || tmpdir() });
   } catch {
     throw new DocumentError(503, "The text recogniser could not start. The first time it is used it downloads its Arabic data, which needs an internet connection.");
   }
