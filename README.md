@@ -4,7 +4,10 @@ Read the Quran, hadith collections, your own PDFs and documents, or any Arabic t
 
 ## Get it
 
-**As a desktop app (Windows):** download the zip from the Releases page, unzip it anywhere and double-click `Arabic Reader.exe`. Nothing else needs installing. Windows may warn that the app is from an unknown publisher (it is not signed): choose "More info", then "Run anyway".
+Download the desktop app from the [Releases page](https://github.com/Ahmad1827/arabic/releases/latest). Nothing else needs installing.
+
+- **Windows:** unzip `Arabic-Reader-Windows-x64.zip` into a normal Windows folder and double-click `Arabic Reader.exe`. Windows may warn that the app is from an unknown publisher (it is not signed): choose "More info", then "Run anyway".
+- **Linux (64-bit):** unpack `Arabic-Reader-Linux-x64.tar.gz` and run `./install.sh` inside the folder. That installs it for your user only (no administrator rights) and adds it to the applications menu. `./install.sh --remove` takes it out again.
 
 **From source (any system, runs in your browser):**
 
