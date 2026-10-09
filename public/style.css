@@ -2067,3 +2067,308 @@ mark {
   height: 1px;
   background: var(--line);
 }
+
+/* ---- Practice sessions ---- */
+
+.session-top {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 34rem;
+  margin: 0 auto 1rem;
+}
+.session-bar {
+  flex: 1;
+  height: 0.8rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.08);
+}
+.session-bar .bar-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--emerald-1), var(--gold-bright));
+  transition: width 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 0.85rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.combo svg {
+  fill: currentColor;
+}
+.combo.pop {
+  animation: pop 0.35s ease-out;
+}
+.icon-btn.off {
+  opacity: 0.55;
+}
+.stage.swap > * {
+  animation: rise 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.eyebrow {
+  margin: 0 0 1rem;
+  font-size: 1.02rem;
+  color: var(--muted);
+}
+.eyebrow strong {
+  color: var(--ink);
+}
+.choices.wide {
+  grid-template-columns: 1fr;
+}
+.choices.wide .choice {
+  min-height: 3.4rem;
+  font-weight: 500;
+}
+.word-option {
+  font-size: 2rem !important;
+}
+.quranic .word-option,
+.quranic .built,
+.quranic .tile {
+  font-family: var(--quranic);
+}
+
+.listen-btn {
+  width: 6.5rem;
+  height: 6.5rem;
+  margin: 0.25rem auto 0.5rem;
+  border-radius: 50%;
+  border: 0;
+  background: var(--emerald);
+  color: #fff;
+  box-shadow: 0 0 0 8px var(--accent-soft), 0 8px 22px rgb(7 70 63 / 0.3);
+}
+.listen-btn:hover {
+  transform: scale(1.05);
+  border: 0;
+}
+.listen-btn .icon svg {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+/* Tap a letter inside a word: the letters stay joined, so no padding here. */
+.find-word {
+  font-family: var(--arabic);
+  font-size: 5rem;
+  line-height: 1.7;
+  margin: 0.25rem 0;
+  user-select: none;
+}
+.glyph {
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.glyph:hover {
+  color: var(--accent);
+}
+.glyph:focus-visible {
+  outline: none;
+  color: var(--gold);
+}
+.glyph.right {
+  color: var(--accent);
+}
+.glyph.wrong {
+  color: var(--danger);
+}
+.glyph.faded {
+  color: var(--line);
+  cursor: default;
+}
+
+.match-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+.match-col {
+  display: grid;
+  gap: 0.6rem;
+}
+.match {
+  flex-direction: column;
+  gap: 0.05rem;
+  min-height: 4.4rem;
+  padding: 0.4rem;
+  border-width: 2px;
+  border-radius: 14px;
+}
+.match .letter {
+  font-size: 2.3rem;
+  line-height: 1.4;
+}
+.match small {
+  font-weight: 400;
+  color: var(--muted);
+}
+.match.picked {
+  border-color: var(--gold-bright);
+  background: var(--gold-soft);
+  transform: scale(1.03);
+}
+.match.right {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  opacity: 0.75;
+  animation: pop 0.35s ease-out;
+}
+.match:disabled {
+  cursor: default;
+}
+.shake {
+  animation: shake 0.4s ease-in-out;
+  border-color: var(--danger) !important;
+}
+@keyframes shake {
+  20%,
+  60% {
+    transform: translateX(-7px);
+  }
+  40%,
+  80% {
+    transform: translateX(7px);
+  }
+}
+
+.built-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+}
+.built {
+  min-width: 11rem;
+  padding: 0 1.2rem;
+  border-bottom: 3px solid var(--gold-bright);
+  font-family: var(--arabic);
+  font-size: 3rem;
+  line-height: 1.8;
+}
+.built.empty {
+  border-bottom-style: dashed;
+  border-bottom-color: var(--line);
+}
+.built.right {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.built.wrong {
+  color: var(--danger);
+  border-bottom-color: var(--danger);
+}
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.55rem;
+}
+.tile {
+  width: 3.6rem;
+  height: 3.8rem;
+  padding: 0 0 0.3rem;
+  border-width: 2px;
+  border-bottom-width: 4px;
+  border-radius: 14px;
+  font-family: var(--arabic);
+  font-size: 2rem;
+  font-weight: 400;
+  line-height: 1;
+}
+.tile:hover:not(:disabled) {
+  border-color: var(--gold-bright);
+  transform: translateY(-3px);
+}
+.tile:disabled {
+  opacity: 0.25;
+  border-bottom-width: 2px;
+}
+
+.feedback.answer {
+  margin-top: 1.5rem;
+  padding-top: 1.1rem;
+  border-top: 1px dashed var(--line);
+}
+.feedback.answer .context {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1.3rem;
+}
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+.too-easy {
+  color: var(--muted);
+}
+.mode-switch {
+  display: block;
+  max-width: 34rem;
+  margin: 0 auto;
+  text-align: center;
+  color: var(--muted) !important;
+}
+
+.results .ring {
+  --size: 8.5rem;
+  margin: 0 auto 1rem;
+  background: conic-gradient(var(--gold-bright) calc(var(--p) * 1%), var(--surface-2) 0);
+}
+.results .ring-inner {
+  color: rgb(255 255 255 / 0.75);
+}
+.results h1 {
+  margin-bottom: 1rem;
+}
+.result-stats {
+  max-width: 18rem;
+  margin: 0 auto 1rem;
+}
+.missed-letters {
+  font-family: var(--arabic);
+  font-size: 1.7rem;
+  color: var(--ink);
+}
+
+.confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti i {
+  position: absolute;
+  top: -1rem;
+  width: 0.55rem;
+  height: 0.9rem;
+  border-radius: 2px;
+  animation: fall linear forwards;
+}
+@keyframes fall {
+  to {
+    transform: translateY(105vh) rotate(var(--turn));
+    opacity: 0.9;
+  }
+}
+.ask-sound .icon-btn {
+  font-size: 1rem;
+  vertical-align: middle;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
