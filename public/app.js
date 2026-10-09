@@ -1,4 +1,4 @@
-import { LETTERS, ALPHABET_GROUPS, TRAINER_LETTERS, letterForms } from "./letters.js";
+import { LETTERS, LETTER_AUDIO, LETTER_SPOKEN, ALPHABET_GROUPS, TRAINER_LETTERS, letterForms } from "./letters.js";
 
 const view = document.getElementById("view");
 const panel = document.getElementById("panel");
@@ -121,18 +121,25 @@ const settings = loadSettings();
 
 // ---- Audio ----------------------------------------------------------------
 
-// Everything without a recording is read by the browser's own Arabic voice.
-// Levantine text prefers a Levantine voice when the browser has one.
+// Everything without a recording is read aloud by the app's own voice, made
+// on this computer so it works in every browser. If that voice has not been
+// installed, the browser's Arabic voice is used instead, when it has one.
 const VOICE_LOCALES = {
   levantine: ["ar-sy", "ar-lb", "ar-jo", "ar-ps", "ar-sa"],
   other: ["ar-sa", "ar-ae", "ar-eg"],
 };
+const hasBrowserSpeech = "speechSynthesis" in window;
+const voiceAudio = new Audio(); // plays the app's own voice
+let appVoice = false;
 let warnedNoVoice = false;
 let currentUtterance = null; // the most recent thing asked to be spoken
-if ("speechSynthesis" in window) speechSynthesis.getVoices(); // starts loading the voice list
+if (hasBrowserSpeech) speechSynthesis.getVoices(); // starts loading the voice list
+api("/voice")
+  .then((voice) => (appVoice = voice.available))
+  .catch(() => {});
 
 function pickVoice(mode) {
-  if (!("speechSynthesis" in window)) return null;
+  if (!hasBrowserSpeech) return null;
   const wanted = VOICE_LOCALES[mode] ?? VOICE_LOCALES.other;
   const score = (voice) => {
     const rank = wanted.indexOf(voice.lang.toLowerCase().replace("_", "-"));
@@ -142,30 +149,65 @@ function pickVoice(mode) {
   return voices.sort((a, b) => score(b) - score(a))[0] ?? null;
 }
 
+const canSpeak = (mode) => appVoice || Boolean(pickVoice(mode));
+
 function noVoiceNotice() {
-  toast(
-    "This browser has no Arabic voice, so it cannot read this aloud. Microsoft Edge has natural Arabic voices built in; in other browsers, add Arabic speech in your system's language settings.",
-    9000,
-  );
+  toast("No Arabic voice is set up yet. In the project folder run: npm run setup-voice, then restart the app.", 9000);
 }
 
-// Speaks the text and returns the utterance, or null if nothing was spoken.
-// `quiet` is for automatic playback: it stays silent instead of complaining.
+function stopSpeaking() {
+  voiceAudio.pause();
+  if (hasBrowserSpeech) speechSynthesis.cancel();
+}
+
+// Speaks the text and returns a handle whose onend/onerror can be set, or
+// null if nothing was spoken. `quiet` is for automatic playback: it stays
+// silent instead of complaining.
 function speak(text, mode, { quiet = false } = {}) {
-  const voice = pickVoice(mode);
-  if (!voice) {
+  if (!canSpeak(mode)) {
     if (!quiet && !warnedNoVoice) noVoiceNotice();
     if (!quiet) warnedNoVoice = true;
-    if (quiet || !("speechSynthesis" in window)) return null;
+    return null;
   }
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = voice?.lang || "ar-SA";
-  if (voice) utterance.voice = voice;
-  utterance.rate = 0.8;
-  currentUtterance = utterance;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(utterance);
-  return utterance;
+  // Whatever was being spoken is cut off, and whoever was waiting on it is told.
+  const previous = currentUtterance;
+  currentUtterance = null;
+  stopSpeaking();
+  previous?.onerror?.();
+
+  let handle;
+  if (appVoice) {
+    handle = { onend: null, onerror: null };
+    voiceAudio.onended = () => handle.onend?.();
+    voiceAudio.onerror = () => {
+      handle.onerror?.();
+      if (!quiet) toast("The voice could not read that.");
+    };
+    voiceAudio.src = `/api/tts?text=${encodeURIComponent(text)}`;
+    voiceAudio.play().catch(() => {});
+  } else {
+    const voice = pickVoice(mode);
+    handle = new SpeechSynthesisUtterance(text);
+    handle.lang = voice.lang;
+    handle.voice = voice;
+    handle.rate = 0.8;
+    speechSynthesis.speak(handle);
+  }
+  currentUtterance = handle;
+  return handle;
+}
+
+// A letter is played from a person's recording of its name where there is one.
+function speakLetter(letter, options) {
+  const file = LETTER_AUDIO[letter];
+  if (!file) return void speak(LETTER_SPOKEN[letter] ?? letter, undefined, options);
+  const previous = currentUtterance;
+  currentUtterance = null;
+  stopSpeaking();
+  previous?.onerror?.();
+  voiceAudio.onended = voiceAudio.onerror = null;
+  voiceAudio.src = `audio/letters/${file}.mp3`;
+  voiceAudio.play().catch(() => {});
 }
 
 const iconButton = (label, onclick, name = "speaker") =>
@@ -190,7 +232,7 @@ async function route() {
   view.classList.remove("enter");
   recitation.onended = recitation.onerror = recitation.onplay = recitation.onpause = null;
   recitation.pause();
-  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  stopSpeaking();
   closePanel();
   const hash = location.hash.replace(/^#/, "") || "/";
   const textMatch = hash.match(/^\/text\/(\d+)$/);
@@ -203,6 +245,7 @@ async function route() {
     else if (hash === "/words") await renderWords(token);
     else if (hash === "/review") await renderReview(token);
     else if (hash.startsWith("/library")) await renderLibrary(token, hash.split("/").slice(2));
+    else if (hash === "/settings") await renderSettings(token);
     else if (hash === "/alphabet") await renderAlphabet(token);
     else if (hash === "/alphabet/practice") await renderAlphabetPractice(token);
     else await renderHome(token);
@@ -487,6 +530,20 @@ async function renderText(id, token) {
     }
   }
 
+  // A sentence is read from its vowelled words where they are known: the
+  // voice pronounces fully vowelled Arabic far more accurately.
+  function spokenText(sentence) {
+    let wordIndex = 0;
+    return sentence.tokens
+      .map((token) => {
+        if (!token.isWord) return AYAH_MARK.test(token.pre + token.core + token.post) ? "" : token.pre + token.core + token.post;
+        const entry = sentence.analysis?.words[wordIndex++];
+        return token.pre + (entry?.vowelled || token.core) + token.post;
+      })
+      .filter(Boolean)
+      .join(" ");
+  }
+
   function draw(index) {
     const sentence = text.sentences[index];
     const row = h("div", { class: "words", dir: "rtl", lang: "ar" });
@@ -534,7 +591,7 @@ async function renderText(id, token) {
               },
               icon("speaker"),
             )
-          : speakButton(sentence.text, "Listen to this sentence", text.mode),
+          : iconButton("Listen to this sentence", () => speak(spokenText(sentence), text.mode)),
         h("p", { class: "translation" }, sentence.analysis?.translation ?? ""),
       ),
     );
@@ -648,7 +705,12 @@ async function renderText(id, token) {
     if (error) {
       status.replaceChildren(
         h("p", { class: "error" }, error),
-        h("button", { type: "button", onclick: startWorkers }, "Try again"),
+        h(
+          "div",
+          { class: "row" },
+          h("button", { type: "button", onclick: startWorkers }, "Try again"),
+          h("a", { class: "button secondary", href: "#/settings" }, "Open Settings"),
+        ),
       );
     } else if (pending.length + active > 0) {
       status.replaceChildren(
@@ -757,7 +819,7 @@ async function renderText(id, token) {
       recitation.src = basmala ? verseAudioUrl(settings.reciter, 1, 1) : verseAudioUrl(settings.reciter, text.surah.number, index + 1);
       recitation.play().catch(() => {}); // a failed load is reported by onerror below
     } else {
-      const utterance = speak(text.sentences[index].text, text.mode);
+      const utterance = speak(spokenText(text.sentences[index]), text.mode);
       playing.utterance = utterance;
       const done = (finishedNormally) => {
         if (playing?.utterance !== utterance) return; // paused, stopped or already moved on
@@ -797,14 +859,14 @@ async function renderText(id, token) {
     const speaking = playing?.utterance;
     playing = null;
     recitation.pause();
-    if (speaking) speechSynthesis.cancel();
+    if (speaking) stopSpeaking();
     article.querySelector(".sentence.playing")?.classList.remove("playing");
     paintPlayer();
   }
 
   function togglePlay() {
     if (!playing) {
-      if (!text.surah && !pickVoice(text.mode)) return noVoiceNotice();
+      if (!text.surah && !canSpeak(text.mode)) return noVoiceNotice();
       return playVerse(page * PAGE_SIZE, true, Boolean(text.surah?.basmala) && page === 0);
     }
     if (text.surah) {
@@ -815,7 +877,7 @@ async function renderText(id, token) {
     } else {
       playing.paused = true;
       playing.utterance = null;
-      speechSynthesis.cancel();
+      stopSpeaking();
       paintPlayer();
     }
   }
@@ -1202,6 +1264,145 @@ async function renderHadith(token, key, section) {
   );
 }
 
+// ---- Settings ---------------------------------------------------------------
+
+// The AI that explains words is chosen by whoever runs the app.
+const AI_CHOICES = [
+  {
+    id: "claude-code",
+    title: "Claude Code on this computer",
+    text: "Uses the Claude Code app that is installed and logged in here. Nothing to paste. It counts toward that Claude plan's usage limits.",
+    fields: ["model"],
+    modelPlaceholder: "sonnet (or opus, haiku)",
+  },
+  {
+    id: "anthropic",
+    title: "Claude with your own API key",
+    text: "Pay-as-you-go access to Claude. Create a key at console.anthropic.com and paste it here.",
+    fields: ["apiKey", "model"],
+    modelPlaceholder: "claude-opus-5-5",
+  },
+  {
+    id: "openai-compatible",
+    title: "Another AI service",
+    text: "Any service that uses the OpenAI chat format: OpenAI, Google Gemini, OpenRouter, Groq, or a model running on your own computer with Ollama.",
+    fields: ["baseUrl", "apiKey", "model"],
+    modelPlaceholder: "the model's name, as your service lists it",
+  },
+];
+const SERVICE_ADDRESSES = [
+  ["OpenAI", "https://api.openai.com/v1"],
+  ["Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"],
+  ["OpenRouter", "https://openrouter.ai/api/v1"],
+  ["Groq", "https://api.groq.com/openai/v1"],
+  ["Ollama on this computer", "http://localhost:11434/v1"],
+];
+
+async function renderSettings(token) {
+  const [ai, voice] = await Promise.all([api("/ai"), api("/voice")]);
+  if (token !== renderToken) return;
+  let chosen = ai.provider;
+
+  const inputs = {
+    baseUrl: h("input", { type: "text", value: ai.baseUrl, placeholder: "https://…", autocomplete: "off", spellcheck: "false" }),
+    apiKey: h("input", { type: "password", autocomplete: "off", placeholder: ai.hasKey ? "A key is saved. Leave empty to keep it." : "Paste the key" }),
+    model: h("input", { type: "text", value: ai.model, autocomplete: "off", spellcheck: "false" }),
+  };
+  const labels = { baseUrl: "Service address", apiKey: "API key", model: "Model" };
+  const hints = {
+    baseUrl: h(
+      "span",
+      { class: "field-hint" },
+      "Fill in: ",
+      SERVICE_ADDRESSES.map(([name, address]) =>
+        h("button", { type: "button", class: "link", onclick: () => (inputs.baseUrl.value = address) }, name),
+      ),
+    ),
+    apiKey: h("span", { class: "field-hint" }, "Stored only on this computer, in the app's data folder. Ollama needs no key."),
+    model: h("span", { class: "field-hint" }, "Leave empty for the usual choice."),
+  };
+  const fields = Object.fromEntries(
+    Object.keys(inputs).map((name) => [name, h("label", { class: "field" }, h("span", {}, labels[name]), inputs[name], hints[name])]),
+  );
+  const result = h("p", { class: "settings-result", role: "status" });
+  const save = h("button", { class: "primary", type: "submit" }, "Save and test");
+
+  const cards = AI_CHOICES.map((choice) => {
+    const radio = h("input", { type: "radio", name: "provider", value: choice.id, checked: choice.id === chosen });
+    radio.addEventListener("change", () => {
+      chosen = choice.id;
+      paint();
+    });
+    return h("label", { class: "choice-card" }, radio, h("span", {}, h("strong", {}, choice.title), h("small", {}, choice.text)));
+  });
+
+  function paint() {
+    const choice = AI_CHOICES.find((c) => c.id === chosen);
+    cards.forEach((card, i) => card.classList.toggle("on", AI_CHOICES[i].id === chosen));
+    for (const [name, field] of Object.entries(fields)) field.hidden = !choice?.fields.includes(name);
+    if (choice) inputs.model.placeholder = choice.modelPlaceholder;
+    hints.model.hidden = chosen === "openai-compatible";
+    save.disabled = !choice;
+  }
+  paint();
+
+  const form = h(
+    "form",
+    {
+      class: "card settings",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        save.disabled = true;
+        result.className = "settings-result muted";
+        result.textContent = "Saving, then trying it on a short sentence…";
+        try {
+          await api("/ai", {
+            method: "PUT",
+            body: { provider: chosen, model: inputs.model.value, baseUrl: inputs.baseUrl.value, apiKey: inputs.apiKey.value },
+          });
+          inputs.apiKey.value = "";
+          const test = await api("/ai/test", { method: "POST" });
+          result.className = "settings-result ok";
+          result.textContent = `It works. It read “أهلا وسهلا” as “${test.translation}”.`;
+        } catch (err) {
+          result.className = "settings-result error";
+          result.textContent = err.message;
+        }
+        save.disabled = false;
+      },
+    },
+    h("h2", {}, "Who explains the words"),
+    h(
+      "p",
+      { class: "muted" },
+      "Texts you paste and hadith are explained word by word by an AI that you choose and set up yourself. The Quran, the alphabet trainer and reviewing need no AI.",
+    ),
+    cards,
+    Object.values(fields),
+    h("div", { class: "row" }, save),
+    result,
+  );
+
+  view.replaceChildren(...[
+    h("h1", {}, "Settings"),
+    !ai.provider && h("p", { class: "note" }, "Nothing is chosen yet, so pasted texts and hadith cannot be explained. Pick one of the options below."),
+    form,
+    h(
+      "section",
+      { class: "card" },
+      h("h2", {}, "Voice"),
+      h(
+        "p",
+        { class: voice.available ? "" : "muted" },
+        voice.available
+          ? "The app's own Arabic voice is installed, so reading aloud works in every browser."
+          : "The app's own Arabic voice is not installed, so reading aloud depends on your browser. To add it, run “npm run setup-voice” in the project folder and restart the app.",
+      ),
+      h("p", { class: "muted small" }, "Quran recitation uses real recordings and needs only an internet connection."),
+    ),
+  ].filter(Boolean));
+}
+
 // ---- Alphabet trainer -----------------------------------------------------
 
 const UNLOCK_AT = 2; // strength every letter needs before the next group opens
@@ -1273,7 +1474,7 @@ async function renderAlphabet(token) {
           group.letters.map((letter) =>
             h(
               "button",
-              { class: "letter-tile", type: "button", onclick: () => speak(letter) },
+              { class: "letter-tile", type: "button", onclick: () => speakLetter(letter) },
               h("span", { class: "letter", lang: "ar" }, letter),
               h("strong", { dir: "ltr" }, LETTERS[letter][0]),
               h("span", { class: "letter-sound", dir: "ltr" }, LETTERS[letter][1]),
@@ -1347,7 +1548,7 @@ async function renderAlphabetPractice(token) {
     const asked = question;
     const correct = option === asked.letter;
     show();
-    speak(asked.letter, undefined, { quiet: true });
+    speakLetter(asked.letter, { quiet: true });
     try {
       const openBefore = unlockedGroups(strengths);
       const result = await api("/letters/answer", { method: "POST", body: { letter: asked.letter, correct } });
@@ -1381,14 +1582,14 @@ async function renderAlphabetPractice(token) {
           "div",
           { class: "card flashcard" },
           h("p", { class: "muted" }, "New letter"),
-          h("div", { class: "panel-head" }, h("span", { class: "big-ar huge", lang: "ar" }, question.letter), speakButton(question.letter, "Listen")),
+          h("div", { class: "panel-head" }, h("span", { class: "big-ar huge", lang: "ar" }, question.letter), iconButton("Listen", () => speakLetter(question.letter))),
           h("p", { class: "panel-translit" }, name),
           h("p", { class: "panel-meaning" }, `sounds like: ${sound}`),
           formsRow(question.letter),
           h("button", { class: "primary", type: "button", onclick: gotIt }, "Got it", h("small", {}, " · space")),
         ),
       );
-      speak(question.letter, undefined, { quiet: true });
+      speakLetter(question.letter, { quiet: true });
       return;
     }
 

@@ -10,10 +10,11 @@ if (existsSync(path.join(here, ".env"))) process.loadEnvFile(path.join(here, ".e
 const { openDb } = await import("./src/db.js");
 const { splitSentences, tokenize } = await import("./src/text.js");
 const { schedule, newCardState, GRADES } = await import("./src/srs.js");
-const { analyzeSentence, AnalysisError, MODES } = await import("./src/analyze.js");
+const { analyzeSentence, checkConfig, AnalysisError, MODES } = await import("./src/analyze.js");
 const { streaks } = await import("./src/streak.js");
 const { TRAINER_LETTERS } = await import("./public/letters.js");
 const library = await import("./src/library.js");
+const voice = await import("./src/voice.js");
 
 const MAX_TEXT_CHARS = 20_000;
 const DAY = 86_400_000;
@@ -221,6 +222,39 @@ app.post("/api/library/hadith/:collection/:section/:number", async (req, res) =>
   res.json({ id: await library.openHadith(db, collection, Number(section), Number(number), saveLibraryText) });
 });
 
+// ---- The AI that explains words (set up by each person in Settings) -----------
+
+function getAi() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'ai'").get();
+  return row ? JSON.parse(row.value) : null;
+}
+
+// What the Settings page may see: everything except the key itself.
+const describeAi = (config) => ({
+  provider: config?.provider ?? null,
+  model: config?.model ?? "",
+  baseUrl: config?.baseUrl ?? "",
+  hasKey: Boolean(config?.apiKey),
+});
+
+app.get("/api/ai", (req, res) => {
+  res.json(describeAi(getAi()));
+});
+
+app.put("/api/ai", (req, res) => {
+  const config = checkConfig(req.body, getAi());
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ai', ?)").run(JSON.stringify(config));
+  res.json(describeAi(config));
+});
+
+// Tries the saved settings on one short sentence, without storing the result.
+app.post("/api/ai/test", async (req, res) => {
+  const analysis = await analyzeSentence({ mode: "msa", sentence: "أهلا وسهلا", config: getAi() });
+  const first = analysis.words.find(Boolean);
+  if (!first) throw new AnalysisError(502, "The AI answered, but not in a form the app can use. A more capable model may be needed.");
+  res.json({ translation: analysis.translation, word: first });
+});
+
 // ---- Analysis -------------------------------------------------------------
 
 const inFlight = new Map(); // hash -> promise, so one sentence is never analysed twice at once
@@ -242,6 +276,7 @@ app.post("/api/analyze", async (req, res) => {
       sentence,
       previous: sentences[index - 1],
       next: sentences[index + 1],
+      config: getAi(),
     })
       .then((analysis) => {
         saveAnalysis(text.mode, sentence, analysis);
@@ -251,6 +286,23 @@ app.post("/api/analyze", async (req, res) => {
     inFlight.set(hash, job);
   }
   res.json(await inFlight.get(hash));
+});
+
+// ---- Voice ------------------------------------------------------------------
+
+const dataDir = path.dirname(process.env.DB_PATH || path.join(here, "data", "app.db"));
+
+app.get("/api/voice", (req, res) => {
+  res.json({ available: voice.voiceAvailable() });
+});
+
+app.get("/api/tts", async (req, res) => {
+  const text = String(req.query.text ?? "").replace(/\s+/g, " ").trim();
+  if (!text || !/\p{Script=Arabic}/u.test(text)) throw new HttpError(400, "There is no Arabic text to read.");
+  if (text.length > 1000) throw new HttpError(400, "That is too long to read in one go.");
+  const file = await voice.speechFile(text, path.join(dataDir, "tts"));
+  res.set("Cache-Control", "private, max-age=31536000, immutable");
+  res.sendFile(file);
 });
 
 // ---- Saved words ----------------------------------------------------------
@@ -327,7 +379,7 @@ app.get("/api/stats", (req, res) => {
 // ---- Errors ---------------------------------------------------------------
 
 app.use((err, req, res, next) => {
-  if (err instanceof HttpError || err instanceof AnalysisError || err instanceof library.LibraryError) {
+  if (err instanceof HttpError || err instanceof AnalysisError || err instanceof library.LibraryError || err instanceof voice.VoiceError) {
     return res.status(err.status).json({ error: err.message });
   }
   if (err.type === "entity.too.large") return res.status(413).json({ error: "That text is too long." });
@@ -337,4 +389,8 @@ app.use((err, req, res, next) => {
 
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || "127.0.0.1";
-app.listen(port, host, () => console.log(`Arabic reader running at http://localhost:${port}`));
+app.listen(port, host, () => {
+  console.log(`Arabic reader running at http://localhost:${port}`);
+  if (voice.voiceAvailable()) voice.warmUp();
+  else console.log("No built-in voice yet. Run `npm run setup-voice` once to add one.");
+});

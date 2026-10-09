@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "setup-voice": "bash scripts/setup-voice.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "express": "^5.2.1"
   }
 }
