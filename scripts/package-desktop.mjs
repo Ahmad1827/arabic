@@ -47,4 +47,6 @@ const [output] = await packager({
   win32metadata: { CompanyName: "Arabic Reader", FileDescription: "Arabic Reader", ProductName: "Arabic Reader" },
 });
 rmSync(stage, { recursive: true, force: true });
+// Linux builds carry a small installer that adds the app to the applications menu.
+if (platform === "linux") cpSync(path.join("desktop", "linux-install.sh"), path.join(output, "install.sh"));
 console.log("Built:", output);
