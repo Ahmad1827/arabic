@@ -131,6 +131,8 @@ const ICON_PATHS = {
   play: '<polygon points="7 4 20 12 7 20 7 4"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>',
   mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="m22 9-6 6M16 9l6 6"/>',
   undo: '<path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><path d="m18 9-6 6M12 9l6 6"/>',
 };
@@ -153,7 +155,7 @@ const stripMarks = (s) => s.replace(/[\p{M}ـ]/gu, "");
 const cardKey = (mode, vowelled) => `${mode}|${vowelled}`;
 
 function loadSettings() {
-  const defaults = { vowels: true, translit: true, gloss: false, translation: true, reciter: RECITERS[0][0], autoExplain: false, sounds: true, classicCards: false };
+  const defaults = { vowels: true, translit: true, gloss: false, translation: true, reciter: RECITERS[0][0], autoExplain: false, sounds: true, classicCards: false, theme: "system" };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem("reader-settings") || "{}") };
   } catch {
@@ -168,6 +170,27 @@ function saveSettings() {
   }
 }
 const settings = loadSettings();
+
+// ---- Light and dark ---------------------------------------------------------
+
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+const isDark = () => settings.theme === "dark" || (settings.theme === "system" && systemDark.matches);
+const themeToggle = document.getElementById("theme-toggle");
+
+function applyTheme() {
+  if (settings.theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = settings.theme;
+  // The button shows what a click will switch to.
+  themeToggle.replaceChildren(icon(isDark() ? "sun" : "moon"));
+  themeToggle.title = isDark() ? "Switch to light" : "Switch to dark";
+}
+themeToggle.addEventListener("click", () => {
+  settings.theme = isDark() ? "light" : "dark";
+  saveSettings();
+  applyTheme();
+});
+systemDark.addEventListener("change", applyTheme);
+applyTheme();
 
 // ---- Audio ----------------------------------------------------------------
 
@@ -772,7 +795,7 @@ async function renderHome(token) {
     { class: "library-promo" },
     promoTile("#/library", "القرآن", "Read the Quran", "All 114 surahs, word by word"),
     promoTile("#/library/hadith", "الحديث", "Read hadith", "Nawawi's Forty, Bukhari, Muslim and more"),
-    promoTile("#/picture", "صورة", "Translate a picture or message", "A sign, a screenshot, a text you copied"),
+    promoTile("#/picture", "صورة", "Translate a picture", "Or a screenshot, a sign, a copied message"),
   );
 
   view.replaceChildren(
@@ -1656,6 +1679,30 @@ async function renderSettings(token) {
     h("h1", {}, "Settings"),
     !ai.provider && h("p", { class: "note" }, "Nothing is chosen yet, so pasted texts and hadith cannot be explained. Pick one of the options below."),
     form,
+    h(
+      "section",
+      { class: "card" },
+      h("h2", {}, "Appearance"),
+      (() => {
+        const choice = h(
+          "select",
+          {
+            "aria-label": "Light or dark",
+            onchange: () => {
+              settings.theme = choice.value;
+              saveSettings();
+              applyTheme();
+            },
+          },
+          [
+            ["system", "Same as my computer"],
+            ["light", "Light"],
+            ["dark", "Dark"],
+          ].map(([value, label]) => h("option", { value, selected: settings.theme === value }, label)),
+        );
+        return h("label", { class: "field" }, h("span", {}, "Light or dark"), choice);
+      })(),
+    ),
     h(
       "section",
       { class: "card" },

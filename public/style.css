@@ -7,6 +7,7 @@
 }
 
 :root {
+  color-scheme: light;
   --bg: #f5efe2;
   --surface: #fffdf7;
   --surface-2: #efe7d6;
@@ -42,8 +43,32 @@
   --emerald: linear-gradient(135deg, var(--emerald-1), var(--emerald-2));
 }
 
+/* Dark colours. They apply when the reader picks "Dark" (data-theme on the
+   page), or when nothing is picked and the system itself is set to dark. */
+:root[data-theme="dark"] {
+  --bg: #0c1413;
+  --surface: #141e1c;
+  --surface-2: #1c2826;
+  --ink: #ece6d8;
+  --muted: #94a19b;
+  --line: #26332f;
+  --accent: #42c9b5;
+  --accent-hover: #63d8c6;
+  --accent-ink: #06221e;
+  --accent-soft: #14352f;
+  --emerald-1: #0c5c53;
+  --emerald-2: #062f2a;
+  --gold: #e6b450;
+  --gold-soft: #33280f;
+  --danger: #f08477;
+  --danger-soft: #3d1c18;
+  --mark: #6a5312;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.28);
+  --shadow-lift: 0 2px 6px rgb(0 0 0 / 0.35), 0 18px 40px rgb(0 0 0 / 0.4);
+  color-scheme: dark;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #0c1413;
     --surface: #141e1c;
     --surface-2: #1c2826;
@@ -63,6 +88,7 @@
     --mark: #6a5312;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.28);
     --shadow-lift: 0 2px 6px rgb(0 0 0 / 0.35), 0 18px 40px rgb(0 0 0 / 0.4);
+    color-scheme: dark;
   }
 }
 
@@ -2446,4 +2472,42 @@ mark {
 }
 .promo-ar {
   pointer-events: none;
+}
+
+/* ---- Light and dark ---- */
+
+button.gear {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+button.gear:hover {
+  border: 0;
+  transform: none;
+}
+@media (max-width: 800px) {
+  /* Only the first of the header buttons takes the free space. */
+  .gear + .gear {
+    margin-left: 0;
+  }
+}
+
+.brand {
+  white-space: nowrap;
+}
+@media (max-width: 1100px) and (min-width: 801px) {
+  /* The header holds a lot: tighten it before anything has to wrap. */
+  .top {
+    gap: 0.5rem;
+  }
+  nav a {
+    padding-inline: 0.6rem;
+  }
+}
+/* The goal menu sits on the green card; its drop-down list is drawn by the system. */
+.progress-foot option {
+  color: #1b2a28;
+  background: #ffffff;
 }
