@@ -2,11 +2,18 @@
 
 Read the Quran, hadith collections, your own PDFs and documents, or any Arabic text you paste, word by word: vowel marks, pronunciation, meaning, root and a letter-by-letter breakdown for every word. Save words and review them with spaced repetition.
 
-## Run it
+## Get it
 
-1. `npm install` (first time only)
-2. `npm run setup-voice` (first time only, optional but recommended): installs the app's own Arabic voice, about 260 MB, so read-aloud works in every browser. Needs Python 3.
-3. `npm start`, then open http://localhost:3000
+**As a desktop app (Windows):** download the zip from the Releases page, unzip it anywhere and double-click `Arabic Reader.exe`. Nothing else needs installing. Windows may warn that the app is from an unknown publisher (it is not signed): choose "More info", then "Run anyway".
+
+**From source (any system, runs in your browser):**
+
+1. `npm install` (first time only; needs Node 24 or newer)
+2. `npm start`, then open http://localhost:3000
+
+`npm run desktop` opens the same thing as a desktop window, and `npm run package win32` (or `linux`, `darwin`) builds the desktop app into `dist/`.
+
+The app's own Arabic voice is optional and installed from **Settings** (about 260 MB, needs Python 3.9+ on the computer). Without it, reading aloud uses whatever Arabic voice the system has.
 
 ## Choose your own AI
 
@@ -24,6 +31,7 @@ The **Translate a picture** page takes a dropped, chosen or pasted picture (a si
 
 ## How it is built
 
+- `desktop/main.js`: the desktop app (Electron). It starts the same server on a private port and shows it in its own window; data then lives in the user's application-data folder.
 - `server.js`: web server and API. Data lives in `data/app.db` (SQLite).
 - `src/analyze.js`: asks the configured AI to analyse one sentence. Each sentence is analysed once and then cached.
 - `src/library.js`: the built-in library. Quran text, translation and word-by-word meanings come from Quran.com; hadith text and translations from the open hadith-api project. Both are downloaded once and then kept locally.

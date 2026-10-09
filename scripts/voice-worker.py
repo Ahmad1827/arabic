@@ -9,6 +9,11 @@ import wave
 
 from piper import PiperVoice, SynthesisConfig
 
+# Requests arrive as UTF-8 whatever the system's own text encoding is (on
+# Windows it is not UTF-8 by default, which would garble the Arabic).
+sys.stdin.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")
+
 voice = PiperVoice.load(sys.argv[1])
 config = SynthesisConfig(length_scale=1.15)  # a little slower than normal, for learners
 print(json.dumps({"ready": True}), flush=True)
