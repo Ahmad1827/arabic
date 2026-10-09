@@ -24,7 +24,54 @@ const RECITERS = [
 const pad3 = (n) => String(n).padStart(3, "0");
 const verseAudioUrl = (reciter, surah, verse) => `https://everyayah.com/data/${reciter}/${pad3(surah)}${pad3(verse)}.mp3`;
 const wordAudioUrl = (surah, verse, word) => `https://audio.qurancdn.com/wbw/${pad3(surah)}_${pad3(verse)}_${pad3(word)}.mp3`;
-const recitation = new Audio(); // the one verse player, shared so two verses never overlap
+// Plays one verse after another without a pause in between. The next verse is
+// downloaded while the current one plays, in a second player that simply takes
+// over when asked for that recording; waiting until a verse ends before
+// fetching the next is what makes an audible gap.
+function createVersePlayer() {
+  let current = new Audio();
+  let spare = new Audio();
+  let spareUrl = null;
+  const player = {
+    onended: null,
+    onerror: null,
+    onplay: null,
+    onpause: null,
+    get paused() {
+      return current.paused;
+    },
+    set src(url) {
+      if (url === spareUrl) {
+        current.pause();
+        [current, spare] = [spare, current];
+      } else {
+        current.src = url;
+      }
+      spareUrl = null;
+    },
+    play: () => current.play(),
+    pause: () => current.pause(),
+    // Starts downloading the recording that will be wanted next.
+    prepare(url) {
+      if (url === spareUrl) return;
+      spareUrl = url;
+      spare.preload = "auto";
+      spare.src = url;
+      spare.load();
+    },
+  };
+  for (const audio of [current, spare]) {
+    for (const type of ["ended", "error", "play", "pause"]) {
+      audio.addEventListener(type, (event) => {
+        if (event.target === current) player[`on${type}`]?.(event);
+        // A failed download in the background is retried normally when its turn comes.
+        else if (type === "error") spareUrl = null;
+      });
+    }
+  }
+  return player;
+}
+const recitation = createVersePlayer(); // the one verse player, shared so two verses never overlap
 
 const SAMPLES = [
   {
@@ -238,13 +285,14 @@ async function route() {
   stopSpeaking();
   closePanel();
   const hash = location.hash.replace(/^#/, "") || "/";
-  const textMatch = hash.match(/^\/text\/(\d+)$/);
+  const textMatch = hash.match(/^\/text\/(\d+)(\?translate)?$/);
   const current = textMatch || hash === "/" ? "read" : hash.split("/")[1];
   for (const link of document.querySelectorAll("[data-nav]")) {
     link.classList.toggle("active", link.dataset.nav === current);
   }
   try {
-    if (textMatch) await renderText(Number(textMatch[1]), token);
+    if (textMatch) await renderText(Number(textMatch[1]), token, Boolean(textMatch[2]));
+    else if (hash === "/picture") await renderPicture(token);
     else if (hash === "/words") await renderWords(token);
     else if (hash === "/review") await renderReview(token);
     else if (hash.startsWith("/library")) await renderLibrary(token, hash.split("/").slice(2));
@@ -366,6 +414,198 @@ function progressCard(stats) {
   );
 }
 
+// ---- Opening a file ------------------------------------------------------------
+
+// The picture in a paste, if there is one. Browsers expose a pasted picture in
+// one of two places depending on where it was copied from, so both are checked.
+function pastedPicture(data) {
+  const fromFiles = [...(data?.files ?? [])].find((file) => file.type.startsWith("image/"));
+  if (fromFiles) return fromFiles;
+  const item = [...(data?.items ?? [])].find((entry) => entry.kind === "file" && entry.type.startsWith("image/"));
+  return item?.getAsFile() ?? null;
+}
+let pendingPicture = null; // a picture pasted elsewhere, on its way to the picture page
+
+// Sends a file to be read and waits for it, reporting how it is getting on.
+// Resolves with the id of the new text.
+async function importFile(file, params, onStatus) {
+  onStatus(`Reading “${file.name}”…`);
+  const query = new URLSearchParams({ name: file.name || "picture.png", ...params });
+  const response = await fetch(`/api/documents?${query}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+  const started = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(started.error || `The file could not be opened (${response.status}).`);
+
+  // Scans are read page by page, which can take a while: show how far it is.
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const job = await api(`/documents/jobs/${started.job}`);
+    if (job.state === "done") return job.textId;
+    if (job.state === "failed") throw new Error(job.error);
+    if (job.stage === "ai") onStatus("Your AI is reading the picture…");
+    else if (job.stage === "recognising") onStatus(job.pages > 1 ? `This is a scan, so the text is being recognised: page ${job.page} of ${job.pages}…` : "Recognising the text…");
+  }
+}
+
+// ---- Translate a picture ---------------------------------------------------------
+
+async function renderPicture(token) {
+  const ai = await api("/ai");
+  if (token !== renderToken) return;
+
+  const mode = h(
+    "select",
+    { "aria-label": "Kind of Arabic" },
+    Object.entries(MODE_LABEL).map(([value, label]) => h("option", { value, selected: value === "msa" }, label)),
+  );
+  const reader = (value, title, text, checked) =>
+    h(
+      "label",
+      { class: "choice-card" },
+      h("input", { type: "radio", name: "reader", value, checked }),
+      h("span", {}, h("strong", {}, title), h("small", {}, text)),
+    );
+  const readers = [
+    reader("ai", "Read it with my AI", "Most accurate, also for photos, signs, screenshots and vowelled text.", Boolean(ai.provider)),
+    reader("local", "Read it on this computer", "Free and private, but makes more mistakes. Best on clean printed pages.", !ai.provider),
+  ];
+  const paintReaders = () => readers.forEach((card) => card.classList.toggle("on", card.querySelector("input").checked));
+  readers.forEach((card) => card.addEventListener("change", paintReaders));
+  paintReaders();
+
+  const picker = h("input", { type: "file", accept: "image/*", hidden: true, onchange: () => translate(picker.files[0]) });
+  const idleStatus = "Drop a picture here, or";
+  const status = h("p", { class: "drop-status" }, idleStatus);
+
+  // A copied message (plain text) is translated the same way as a picture.
+  async function translateText(message) {
+    const body = message.trim();
+    if (!body) return toast("There is nothing to translate yet. Paste or type a message first.");
+    if (!/\p{Script=Arabic}/u.test(body)) return toast("That text has no Arabic in it.");
+    try {
+      const { id } = await api("/texts", { method: "POST", body: { body, mode: mode.value } });
+      location.hash = `#/text/${id}?translate`;
+    } catch (err) {
+      toast(err.message, 8000);
+    }
+  }
+
+  // Whatever was pasted: a picture goes to be read, text goes straight to translation.
+  function takeClipboard(data) {
+    const file = pastedPicture(data);
+    if (file) return void translate(file);
+    const message = data?.getData("text/plain") ?? "";
+    if (message.trim()) return void translateText(message);
+    toast("Nothing that can be translated was pasted: copy a picture or some text first.");
+  }
+
+  const pasteBox = h("textarea", {
+    class: "paste-box",
+    rows: 3,
+    dir: "auto",
+    placeholder: "Or click here and paste (Ctrl+V) a picture or a message…",
+    "aria-label": "Paste a picture or a message here",
+  });
+  pasteBox.addEventListener("paste", (event) => {
+    event.preventDefault();
+    event.stopPropagation(); // the page-wide paste handler below would handle it a second time
+    takeClipboard(event.clipboardData);
+  });
+  // For browsers or situations where Ctrl+V does nothing: read the clipboard on a click.
+  const pasteButton = h(
+    "button",
+    {
+      type: "button",
+      onclick: async () => {
+        try {
+          for (const item of await navigator.clipboard.read()) {
+            const imageType = item.types.find((type) => type.startsWith("image/"));
+            if (imageType) return void translate(new File([await item.getType(imageType)], "pasted.png", { type: imageType }));
+            if (item.types.includes("text/plain")) return void translateText(await (await item.getType("text/plain")).text());
+          }
+          toast("The clipboard has nothing that can be translated: copy a picture or some text first.");
+        } catch {
+          toast("The browser did not allow reading the clipboard. Click in the box and press Ctrl+V instead.", 7000);
+        }
+      },
+    },
+    "Paste from clipboard",
+  );
+  const translateTyped = h("button", { type: "button", class: "primary", onclick: () => translateText(pasteBox.value) }, "Translate this text");
+  const preview = h("img", { class: "drop-preview", alt: "", hidden: true });
+  const zone = h(
+    "div",
+    { class: "drop big" },
+    picker,
+    preview,
+    h("span", { class: "promo-ar", lang: "ar", "aria-hidden": "true" }, "صورة"),
+    status,
+    h("div", { class: "row" }, h("button", { type: "button", class: "primary", onclick: () => picker.click() }, "Choose a picture"), pasteButton),
+  );
+
+  async function translate(file) {
+    if (!file || zone.classList.contains("loading")) return;
+    if (!file.type.startsWith("image/")) return toast("That is not a picture. PDFs and documents can be dropped on the home page.");
+    zone.classList.add("loading");
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+    try {
+      const read = readers[0].querySelector("input").checked ? "ai" : "local";
+      const id = await importFile(file, { mode: mode.value, read }, (text) => (status.textContent = text));
+      // Opening it with ?translate asks the reader to translate straight away.
+      location.hash = `#/text/${id}?translate`;
+    } catch (err) {
+      toast(err.message, 9000);
+      zone.classList.remove("loading");
+      status.textContent = idleStatus;
+    }
+  }
+
+  let depth = 0;
+  zone.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    depth++;
+    zone.classList.add("dragging");
+  });
+  zone.addEventListener("dragover", (event) => event.preventDefault());
+  zone.addEventListener("dragleave", () => {
+    if (--depth <= 0) zone.classList.remove("dragging");
+  });
+  zone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    depth = 0;
+    zone.classList.remove("dragging");
+    translate(event.dataTransfer?.files?.[0]);
+  });
+  // A screenshot copied to the clipboard can be pasted straight in.
+  function onPaste(event) {
+    if (token !== renderToken) return document.removeEventListener("paste", onPaste);
+    // Pasting anywhere on this page works, not only inside the box.
+    event.preventDefault();
+    takeClipboard(event.clipboardData);
+  }
+  document.addEventListener("paste", onPaste);
+
+  view.replaceChildren(...[
+    h("h1", {}, "Translate a picture or a message"),
+    h(
+      "p",
+      { class: "muted" },
+      "A sign, a book page, a screenshot, or a message you copied: the Arabic in it is read, then translated and explained word by word. The translation is done by your AI, so anything dropped or pasted here does use it.",
+    ),
+    !ai.provider && h("p", { class: "note" }, "No AI is set up yet, so the text can be read but not translated. ", h("a", { href: "#/settings" }, "Open Settings"), " to choose one."),
+    zone,
+    h("div", { class: "paste-area" }, pasteBox, translateTyped),
+    h("section", { class: "card settings" }, h("h2", {}, "How to read a picture"), readers, h("label", { class: "field" }, h("span", {}, "Kind of Arabic"), mode)),
+  ].filter(Boolean));
+
+  // A picture pasted into the text box on the home page continues here.
+  if (pendingPicture) {
+    const file = pendingPicture;
+    pendingPicture = null;
+    translate(file);
+  }
+}
+
 // ---- Home: add a text, list of texts --------------------------------------
 
 async function renderHome(token) {
@@ -375,8 +615,17 @@ async function renderHome(token) {
   const body = h("textarea", {
     dir: "auto",
     rows: 6,
-    placeholder: "Paste Arabic text here: a message, song lyrics, a verse, a news paragraph…",
+    placeholder: "Paste Arabic text here: a message, song lyrics, a verse, a news paragraph… A screenshot can be pasted too.",
     required: true,
+  });
+  // The box is for text, but a pasted picture (a screenshot of a message, say)
+  // is not refused: it is taken to the picture page and translated there.
+  body.addEventListener("paste", (event) => {
+    const picture = pastedPicture(event.clipboardData);
+    if (!picture) return;
+    event.preventDefault();
+    pendingPicture = picture;
+    location.hash = "#/picture";
   });
   const title = h("input", { type: "text", placeholder: "Title (optional)" });
   const mode = h(
@@ -400,23 +649,9 @@ async function renderHome(token) {
   async function openFile(file) {
     if (!file || drop.classList.contains("loading")) return;
     drop.classList.add("loading");
-    dropLabel.textContent = `Reading “${file.name}”… `;
     try {
-      const query = new URLSearchParams({ name: file.name, mode: mode.value, title: title.value });
-      const response = await fetch(`/api/documents?${query}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
-      const started = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(started.error || `The file could not be opened (${response.status}).`);
-
-      // Scans are read page by page, which can take a while: show how far it is.
-      for (;;) {
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        const job = await api(`/documents/jobs/${started.job}`);
-        if (job.state === "done") return void (location.hash = `#/text/${job.textId}`);
-        if (job.state === "failed") throw new Error(job.error);
-        if (job.stage === "recognising") {
-          dropLabel.textContent = `This is a scan, so the text is being recognised: page ${job.page} of ${job.pages}… `;
-        }
-      }
+      const id = await importFile(file, { mode: mode.value, title: title.value }, (status) => (dropLabel.textContent = `${status} `));
+      location.hash = `#/text/${id}`;
     } catch (err) {
       toast(err.message, 8000);
       drop.classList.remove("loading");
@@ -537,6 +772,7 @@ async function renderHome(token) {
     { class: "library-promo" },
     promoTile("#/library", "القرآن", "Read the Quran", "All 114 surahs, word by word"),
     promoTile("#/library/hadith", "الحديث", "Read hadith", "Nawawi's Forty, Bukhari, Muslim and more"),
+    promoTile("#/picture", "صورة", "Translate a picture or message", "A sign, a screenshot, a text you copied"),
   );
 
   view.replaceChildren(
@@ -553,7 +789,7 @@ const TOGGLES = [
   ["translation", "Translation"],
 ];
 
-async function renderText(id, token) {
+async function renderText(id, token, translateNow = false) {
   const [text, cards] = await Promise.all([api(`/texts/${id}`), api("/cards")]);
   if (token !== renderToken) return;
 
@@ -922,6 +1158,11 @@ async function renderText(id, token) {
       // The basmala before a surah is recited from the opening verse of Al-Fatiha.
       recitation.src = basmala ? verseAudioUrl(settings.reciter, 1, 1) : verseAudioUrl(settings.reciter, text.surah.number, index + 1);
       recitation.play().catch(() => {}); // a failed load is reported by onerror below
+      // Fetch what comes next now, so it can start the instant this one ends.
+      const upcoming = basmala ? index : index + 1;
+      if (continuous && upcoming < text.sentences.length) {
+        recitation.prepare(verseAudioUrl(settings.reciter, text.surah.number, upcoming + 1));
+      }
     } else {
       const utterance = speak(spokenText(text.sentences[index]), text.mode);
       playing.utterance = utterance;
@@ -1023,10 +1264,17 @@ async function renderText(id, token) {
       pagers[0],
       article,
       pagers[1],
+      text.picture &&
+        h("details", { class: "full-translation" }, h("summary", {}, "Original picture"), h("img", { class: "original-picture", src: `/api/texts/${id}/picture`, alt: "The picture this text was read from" })),
       text.source && h("p", { class: "source" }, text.source),
     ].filter(Boolean),
   );
   showPage(false);
+  if (translateNow) {
+    // Asked for by dropping a picture on the "Translate a picture" page.
+    explain(pageIndexes);
+    history.replaceState(null, "", `#/text/${id}`);
+  }
 }
 
 function closePanel() {

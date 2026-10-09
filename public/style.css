@@ -2372,3 +2372,69 @@ mark {
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+/* ---- Translate a picture ---- */
+
+.drop.big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  min-height: 15rem;
+  margin: 0 0 1.5rem;
+  padding: 2rem 1rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 1rem;
+}
+.drop.big .promo-ar {
+  top: 0.2rem;
+  right: 1.2rem;
+}
+.drop.dragging {
+  border-color: var(--gold-bright);
+  background: var(--gold-soft);
+  color: var(--ink);
+}
+.drop-status {
+  margin: 0;
+}
+.drop.loading .primary {
+  display: none;
+}
+.drop-preview {
+  max-height: 11rem;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.original-picture {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.8rem;
+  border-radius: var(--radius-sm);
+}
+.full-translation:has(.original-picture) {
+  margin-top: 0.9rem;
+}
+
+.drop.big .row {
+  margin-top: 0;
+  justify-content: center;
+}
+.drop.loading .row {
+  display: none;
+}
+.paste-area {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+.paste-box {
+  flex: 1 1 18rem;
+  min-height: 4.5rem;
+  background: var(--surface);
+}

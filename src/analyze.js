@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaJSONSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/beta/json-schema";
 import { wordsOf } from "./text.js";
@@ -231,6 +233,136 @@ async function askOpenAICompatible(prompt, config) {
   } catch {
     throw new AnalysisError(502, "The AI service did not answer in the expected format. A more capable model may be needed.");
   }
+}
+
+// ---- Reading the text off a picture ---------------------------------------------
+
+const PICTURE_PROMPT = `Transcribe all the Arabic text in this picture exactly as it is written, in reading order, keeping any vowel marks. Write each paragraph or separate item (a heading, a sign, a caption) on its own line, and when a sentence merely wraps onto the next line of the picture, keep it together on one line. Leave out text in other languages and do not translate anything. Output only the Arabic text, with no introduction and no comments. If the picture contains no Arabic text, output exactly: NONE`;
+
+// Runs Claude Code on a folder holding only the picture, with nothing but the
+// tool for reading files switched on.
+async function pictureWithClaudeCode(jpeg, config) {
+  const folder = await mkdtemp(path.join(tmpdir(), "arabic-picture-"));
+  try {
+    await writeFile(path.join(folder, "picture.jpg"), jpeg);
+    return await new Promise((resolve, reject) => {
+      const child = spawn(
+        "claude",
+        [
+          "-p",
+          "--output-format", "json",
+          "--model", config.model || DEFAULT_MODEL["claude-code"],
+          "--tools", "Read",
+          "--allowedTools", "Read",
+          "--strict-mcp-config",
+          "--setting-sources", "",
+          "--no-session-persistence",
+        ],
+        { cwd: folder, stdio: ["pipe", "pipe", "pipe"] },
+      );
+      let stdout = "";
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new AnalysisError(504, "Claude took too long to read the picture. Try again."));
+      }, TIMEOUT_MS);
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err.code === "ENOENT" ? new AnalysisError(503, "Claude Code is not installed on this computer. Install it, or choose another option in Settings.") : err);
+      });
+      child.on("close", () => {
+        clearTimeout(timer);
+        let reply;
+        try {
+          reply = JSON.parse(stdout);
+        } catch {
+          return reject(new AnalysisError(502, "Claude Code could not read the picture."));
+        }
+        if (reply.is_error) return reject(new AnalysisError(502, `Claude Code said: ${String(reply.result ?? "no answer").slice(0, 300)}`));
+        resolve(String(reply.result ?? ""));
+      });
+      child.stdin.end(`Read the image file picture.jpg in this folder. ${PICTURE_PROMPT}`);
+    });
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+}
+
+async function pictureWithAnthropic(jpeg, config) {
+  const model = config.model || DEFAULT_MODEL.anthropic;
+  const client = new Anthropic({ apiKey: config.apiKey });
+  let message;
+  try {
+    message = await client.beta.messages.create({
+      model,
+      max_tokens: 16000,
+      ...(HAS_FALLBACK.test(model) && { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }),
+      ...(!NO_EFFORT.test(model) && { output_config: { effort: "low" } }),
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.toString("base64") } },
+            { type: "text", text: PICTURE_PROMPT },
+          ],
+        },
+      ],
+    });
+  } catch (err) {
+    if (err instanceof Anthropic.AuthenticationError) throw new AnalysisError(401, "The Anthropic API key was rejected. Check it in Settings.");
+    if (err instanceof Anthropic.NotFoundError) throw new AnalysisError(404, `Anthropic does not know the model "${model}". Check the model name in Settings.`);
+    if (err instanceof Anthropic.RateLimitError) throw new AnalysisError(429, "The Anthropic API is rate limiting this key. Wait a moment and try again.");
+    if (err instanceof Anthropic.APIConnectionError) throw new AnalysisError(502, "Could not reach the Anthropic API. Check your internet connection.");
+    if (err instanceof Anthropic.APIError) throw new AnalysisError(502, `Anthropic API error (${err.status}): ${err.message}`);
+    throw err;
+  }
+  if (message.stop_reason === "refusal") throw new AnalysisError(422, "The model declined to read this picture.");
+  return message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+}
+
+async function pictureWithOpenAICompatible(jpeg, config) {
+  let response;
+  try {
+    response = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }) },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: PICTURE_PROMPT },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${jpeg.toString("base64")}` } },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err.name === "TimeoutError") throw new AnalysisError(504, "The AI service took too long to read the picture. Try again.");
+    throw new AnalysisError(502, `Could not reach ${config.baseUrl}. Check the address in Settings, and that the service is running.`);
+  }
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new AnalysisError(401, "The AI service rejected the API key. Check it in Settings.");
+    if (response.status === 429) throw new AnalysisError(429, "The AI service is rate limiting this key, or its free quota is used up. Wait and try again.");
+    throw new AnalysisError(502, `The AI service could not read the picture (error ${response.status}). The model chosen in Settings may not accept pictures.`);
+  }
+  const data = await response.json().catch(() => null);
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") throw new AnalysisError(502, "The AI service sent back an answer the app could not read.");
+  return content;
+}
+
+const READ_PICTURE = { "claude-code": pictureWithClaudeCode, anthropic: pictureWithAnthropic, "openai-compatible": pictureWithOpenAICompatible };
+
+// Returns the Arabic text seen in a JPEG picture, one line per line.
+export async function readPicture({ jpeg, config }) {
+  if (!config) throw new AnalysisError(409, "No AI is set up yet. Open Settings and choose one, or read the picture on this computer instead.");
+  const text = (await READ_PICTURE[config.provider](jpeg, config)).replace(/^```\w*\n?|```$/g, "").trim();
+  if (!text || /^NONE\.?$/i.test(text)) throw new AnalysisError(422, "No Arabic text was found in this picture.");
+  return text;
 }
 
 // ---- Settings ---------------------------------------------------------------

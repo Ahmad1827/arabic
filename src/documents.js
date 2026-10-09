@@ -381,16 +381,30 @@ const READERS = {
 };
 export const DOCUMENT_TYPES = Object.keys(READERS);
 
-// Returns { title, body, source } for a file's name and contents.
-// `options.cacheDir` is where the text recogniser keeps its language data;
-// `options.onProgress` is told which page is being worked on.
-export async function readDocument(filename, data, options = {}) {
-  const extension = path.extname(filename).toLowerCase();
-  // A PDF is recognised by its first bytes too, in case the name says nothing.
-  const reader = READERS[extension] ?? (data.subarray(0, 5).toString("latin1") === "%PDF-" ? fromPdf : null);
-  if (!reader) throw new DocumentError(415, `This kind of file cannot be read. Use one of: ${DOCUMENT_TYPES.join(", ")}.`);
+const PICTURE_TYPES = [".png", ".jpg", ".jpeg", ".webp"];
+export const isPicture = (filename) => PICTURE_TYPES.includes(path.extname(filename).toLowerCase());
 
-  const { body, detail } = await reader(data, options);
+// Shrinks a picture to a size that is quick to send and store, as a JPEG.
+export async function preparePicture(data) {
+  const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+  let image;
+  try {
+    image = await loadImage(data);
+  } catch {
+    throw new DocumentError(422, "This picture could not be opened. Use a PNG or JPEG image.");
+  }
+  const scale = Math.min(1, 2200 / Math.max(image.width, image.height));
+  const canvas = createCanvas(Math.round(image.width * scale), Math.round(image.height * scale));
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toBuffer("image/jpeg", 88);
+}
+
+// The last step for every kind of file: clean the text up and describe where
+// it came from. Returns { title, body, source }.
+export function tidyDocument(filename, body, detail) {
   const cleaned = body
     // Invisible control characters (PDFs sometimes carry a NUL for a glyph
     // they cannot name) would cut the text short when stored.
@@ -405,4 +419,16 @@ export async function readDocument(filename, data, options = {}) {
     body: cleaned,
     source: `From the file “${path.basename(filename)}” (${detail}).`,
   };
+}
+
+// Returns { title, body, source } for a file's name and contents.
+// `options.cacheDir` is where the text recogniser keeps its language data;
+// `options.onProgress` is told which page is being worked on.
+export async function readDocument(filename, data, options = {}) {
+  const extension = path.extname(filename).toLowerCase();
+  // A PDF is recognised by its first bytes too, in case the name says nothing.
+  const reader = READERS[extension] ?? (data.subarray(0, 5).toString("latin1") === "%PDF-" ? fromPdf : null);
+  if (!reader) throw new DocumentError(415, `This kind of file cannot be read. Use one of: ${DOCUMENT_TYPES.join(", ")}.`);
+  const { body, detail } = await reader(data, options);
+  return tidyDocument(filename, body, detail);
 }
