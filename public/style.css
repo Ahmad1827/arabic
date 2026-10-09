@@ -1964,3 +1964,62 @@ mark {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ---- Translating on request ---- */
+
+.word.unexplained {
+  cursor: default;
+}
+.word.unexplained:hover {
+  background: none;
+}
+.word.unexplained .tr,
+.word.unexplained .gl {
+  display: none;
+}
+.sentence-foot .explain {
+  margin-inline-start: auto;
+  min-height: 2.3rem;
+  padding: 0.3rem 0.95rem;
+  border-radius: 999px;
+  border-color: var(--gold-bright);
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+.sentence-foot .explain:hover {
+  background: var(--gold-bright);
+  color: var(--emerald-2);
+}
+.explain-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.6rem 0.6rem 1.1rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.explain-bar .primary {
+  min-height: 2.4rem;
+  border-radius: 999px;
+  padding: 0.35rem 1.1rem;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.check input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
+}

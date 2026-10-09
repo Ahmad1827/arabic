@@ -16,7 +16,7 @@ Texts you paste and hadith are explained word by word by an AI. The app ships wi
 - **Claude with your own API key**: pay-as-you-go, with a key from console.anthropic.com.
 - **Another AI service**: anything with an OpenAI-style chat endpoint, such as OpenAI, Google Gemini, OpenRouter, Groq, or a model running locally with Ollama. You give the address, the model name and, if the service needs one, a key.
 
-Keys are stored only in `data/app.db` on your computer. The Quran, the alphabet trainer and reviewing work without any AI.
+Nothing is sent to the AI until you press "Translate and explain" under a sentence or "Translate this page" (automatic translation can be switched on in Settings). Keys are stored only in `data/app.db` on your computer. The Quran, the alphabet trainer and reviewing work without any AI.
 
 ## How it is built
 
