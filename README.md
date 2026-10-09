@@ -1,6 +1,6 @@
 # Arabic Reader
 
-Read the Quran, hadith collections or any Arabic text you paste, word by word: vowel marks, pronunciation, meaning, root and a letter-by-letter breakdown for every word. Save words and review them with spaced repetition.
+Read the Quran, hadith collections, your own PDFs and documents, or any Arabic text you paste, word by word: vowel marks, pronunciation, meaning, root and a letter-by-letter breakdown for every word. Save words and review them with spaced repetition.
 
 ## Run it
 
@@ -24,6 +24,7 @@ Nothing is sent to the AI until you press "Translate and explain" under a senten
 - `src/analyze.js`: asks the configured AI to analyse one sentence. Each sentence is analysed once and then cached.
 - `src/library.js`: the built-in library. Quran text, translation and word-by-word meanings come from Quran.com; hadith text and translations from the open hadith-api project. Both are downloaded once and then kept locally.
 - `src/voice.js` and `scripts/voice-worker.py`: the read-aloud voice ([Piper](https://github.com/OHF-Voice/piper1-gpl) with an Arabic voice model), running locally. Quran recitation is separate: real recordings streamed from EveryAyah and Quran.com.
+- `src/documents.js`: reads dropped files (PDF, Word .docx, plain text, pictures). PDF text is rebuilt from where each glyph sits on the page, since Arabic PDFs rarely store their text in reading order. Scanned PDFs and photos of pages have no text inside, so their text is recognised with [Tesseract](https://github.com/naptha/tesseract.js) on your computer (its Arabic data, about 2.5 MB, is downloaded on first use); expect some wrong letters.
 - `src/text.js`: splits text into sentences and words.
 - `src/srs.js`: review scheduling.
 - `public/`: the interface (plain HTML, CSS and JavaScript, no build step).

@@ -2023,3 +2023,47 @@ mark {
   height: 1.15rem;
   accent-color: var(--accent);
 }
+
+/* ---- Dropping a file ---- */
+
+.drop {
+  position: relative;
+  overflow: hidden;
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  font-size: 0.92rem;
+  color: var(--muted);
+  transition: border-color 0.15s, background 0.15s;
+}
+.drop .link {
+  margin: 0;
+  font-size: inherit;
+}
+.new-text.dragging .drop {
+  border-color: var(--gold-bright);
+  background: var(--gold-soft);
+  color: var(--ink);
+}
+.new-text.dragging {
+  border-color: var(--gold-bright);
+}
+.page-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0.4rem 0;
+  font-family: var(--display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--gold);
+}
+.page-mark::before,
+.page-mark::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
