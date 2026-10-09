@@ -72,6 +72,16 @@ if (!app.requestSingleInstanceLock()) {
       event.preventDefault();
       shell.openExternal(url);
     });
+    // Going back also works the usual ways: Alt+Left, Backspace outside a text
+    // box is left alone, and the back button on a mouse.
+    const goBack = () => window.webContents.navigationHistory.canGoBack() && window.webContents.navigationHistory.goBack();
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && input.alt && input.key === "ArrowLeft") {
+        event.preventDefault();
+        goBack();
+      }
+    });
+    window.on("app-command", (event, command) => command === "browser-backward" && goBack());
     window.on("closed", () => (window = null));
 
     await window.loadURL(home);
