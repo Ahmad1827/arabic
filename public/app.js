@@ -103,7 +103,7 @@ const stripMarks = (s) => s.replace(/[\p{M}ـ]/gu, "");
 const cardKey = (mode, vowelled) => `${mode}|${vowelled}`;
 
 function loadSettings() {
-  const defaults = { vowels: true, translit: true, gloss: false, translation: true, reciter: RECITERS[0][0] };
+  const defaults = { vowels: true, translit: true, gloss: false, translation: true, reciter: RECITERS[0][0], autoExplain: false };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem("reader-settings") || "{}") };
   } catch {
@@ -557,19 +557,20 @@ async function renderText(id, token) {
       }
       const k = wordIndex++;
       const entry = sentence.analysis?.words[k];
+      const waiting = !sentence.analysis && requested.has(index);
       const key = entry && cardKey(text.mode, entry.vowelled);
       row.append(
         h(
           "button",
           {
-            class: `word${entry ? "" : " pending"}`,
+            class: `word${entry ? "" : waiting ? " pending" : " unexplained"}`,
             type: "button",
             "data-key": key,
             onclick: entry && ((event) => openWord({ entry, sentence, index, k }, event.currentTarget)),
           },
           h("span", { class: "ar ar-v" }, token.pre + (entry?.vowelled || token.core) + token.post),
           h("span", { class: "ar ar-p" }, token.pre + token.core + token.post),
-          h("span", { class: "tr", dir: "ltr", lang: "en" }, entry?.translit ?? (sentence.analysis ? "" : "…")),
+          h("span", { class: "tr", dir: "ltr", lang: "en" }, entry?.translit ?? (waiting ? "…" : "")),
           h("span", { class: "gl", dir: "ltr", lang: "en" }, entry?.meaning ?? ""),
         ),
       );
@@ -593,6 +594,10 @@ async function renderText(id, token) {
             )
           : iconButton("Listen to this sentence", () => speak(spokenText(sentence), text.mode)),
         h("p", { class: "translation" }, sentence.analysis?.translation ?? ""),
+        // Nothing is sent to the AI until this is pressed.
+        !sentence.analysis &&
+          !requested.has(index) &&
+          h("button", { class: "explain", type: "button", onclick: () => explain([index]) }, "Translate and explain"),
       ),
     );
     markSaved();
@@ -696,10 +701,24 @@ async function renderText(id, token) {
   } catch {
     // No storage: start from the beginning.
   }
+  let pageIndexes = [];
+  const requested = new Set(); // sentences the reader has asked to have explained
   let pending = [];
   let total = 0;
   let active = 0;
   let failed = false;
+
+  // Sends sentences to the AI. Only ever called from a button press, unless
+  // the reader has switched on automatic translation in Settings.
+  function explain(indexes) {
+    const fresh = indexes.filter((i) => !text.sentences[i].analysis && !requested.has(i));
+    if (pending.length + active === 0) total = 0;
+    total += fresh.length;
+    for (const i of fresh) requested.add(i);
+    pending.push(...fresh);
+    fresh.forEach(draw);
+    startWorkers();
+  }
 
   function paintStatus(error) {
     if (error) {
@@ -717,7 +736,25 @@ async function renderText(id, token) {
         h("p", { class: "muted" }, `Working out the words… ${Math.max(0, total - pending.length - active)} of ${total} ready`),
       );
     } else {
-      status.replaceChildren();
+      const untouched = pageIndexes.filter((i) => !text.sentences[i].analysis && !requested.has(i));
+      status.replaceChildren(
+        ...(untouched.length
+          ? [
+              h(
+                "div",
+                { class: "explain-bar" },
+                h(
+                  "span",
+                  { class: "muted" },
+                  untouched.length === 1
+                    ? "One part of this page is not translated yet."
+                    : `${untouched.length} parts of this page are not translated yet.`,
+                ),
+                h("button", { type: "button", class: "primary", onclick: () => explain(untouched) }, "Translate this page"),
+              ),
+            ]
+          : []),
+      );
     }
   }
 
@@ -753,9 +790,9 @@ async function renderText(id, token) {
     const first = page * PAGE_SIZE;
     const indexes = text.sentences.slice(first, first + PAGE_SIZE).map((_, i) => first + i);
     article.replaceChildren(...indexes.map((i) => blocks[i]));
+    pageIndexes = indexes;
     indexes.forEach(draw);
-    pending = indexes.filter((i) => !text.sentences[i].analysis);
-    total = pending.length;
+    if (settings.autoExplain) explain(indexes);
 
     const unit = text.surah ? "Verses" : "Sentences";
     for (const pager of pagers) {
@@ -1387,6 +1424,27 @@ async function renderSettings(token) {
     h("h1", {}, "Settings"),
     !ai.provider && h("p", { class: "note" }, "Nothing is chosen yet, so pasted texts and hadith cannot be explained. Pick one of the options below."),
     form,
+    h(
+      "section",
+      { class: "card" },
+      h("h2", {}, "Translating"),
+      (() => {
+        const box = h("input", {
+          type: "checkbox",
+          checked: settings.autoExplain,
+          onchange: () => {
+            settings.autoExplain = box.checked;
+            saveSettings();
+          },
+        });
+        return h("label", { class: "check" }, box, h("span", {}, "Translate texts automatically as soon as I open them"));
+      })(),
+      h(
+        "p",
+        { class: "muted small" },
+        "Off: nothing is sent to your AI until you press “Translate and explain” under a sentence, or “Translate this page”. The Quran is never sent: its word meanings are built in.",
+      ),
+    ),
     h(
       "section",
       { class: "card" },
