@@ -300,8 +300,25 @@ const cardAudioButton = (card) => iconButton("Listen to this word", () => playCa
 
 let renderToken = 0; // bumped on every navigation so stale async work can stop
 
+// Where the reader was before the page now showing, and how far down each
+// page was scrolled. Together they let a text link back to the list it was
+// opened from, with the list where it was left.
+let shownHash = null;
+const scrollOf = new Map();
+
+function rememberOrigin(textId, from) {
+  try {
+    if (from && !from.startsWith("/text/")) sessionStorage.setItem(`reader-from-${textId}`, from);
+    return sessionStorage.getItem(`reader-from-${textId}`);
+  } catch {
+    return from;
+  }
+}
+
 async function route() {
   const token = ++renderToken;
+  if (shownHash !== null) scrollOf.set(shownHash, window.scrollY);
+  const cameFrom = shownHash;
   view.classList.remove("enter");
   recitation.onended = recitation.onerror = recitation.onplay = recitation.onpause = null;
   recitation.pause();
@@ -314,7 +331,7 @@ async function route() {
     link.classList.toggle("active", link.dataset.nav === current);
   }
   try {
-    if (textMatch) await renderText(Number(textMatch[1]), token, Boolean(textMatch[2]));
+    if (textMatch) await renderText(Number(textMatch[1]), token, Boolean(textMatch[2]), rememberOrigin(textMatch[1], cameFrom));
     else if (hash === "/picture") await renderPicture(token);
     else if (hash === "/words") await renderWords(token);
     else if (hash === "/review") await renderReview(token);
@@ -325,6 +342,11 @@ async function route() {
     else await renderHome(token);
   } catch (err) {
     if (token === renderToken) view.replaceChildren(h("p", { class: "error" }, err.message));
+  }
+  if (token === renderToken) {
+    // A list returns to where it was; anything else starts at the top.
+    shownHash = hash;
+    window.scrollTo(0, textMatch ? 0 : (scrollOf.get(hash) ?? 0));
   }
   // Lets the new page fade in once, without replaying on every later redraw.
   if (token === renderToken) {
@@ -812,7 +834,7 @@ const TOGGLES = [
   ["translation", "Translation"],
 ];
 
-async function renderText(id, token, translateNow = false) {
+async function renderText(id, token, translateNow = false, origin = null) {
   const [text, cards] = await Promise.all([api(`/texts/${id}`), api("/cards")]);
   if (token !== renderToken) return;
 
@@ -1277,8 +1299,15 @@ async function renderText(id, token, translateNow = false) {
       )
     : h("div", { class: "reader-head" }, h("h1", { dir: "auto" }, text.title), h("span", { class: "tag" }, MODE_LABEL[text.mode]));
 
+  // The way back: to the list this text was opened from if that is known,
+  // otherwise to the list it belongs to.
+  const hadith = text.ref?.match(/^hadith:([^:]+):/);
+  const back = origin ?? (hadith ? `/library/hadith/${hadith[1]}` : text.ref?.startsWith("quran:") ? "/library" : "/");
+  const backLabel = back.startsWith("/library/hadith") ? "Back to the hadiths" : back === "/library" ? "Back to the surahs" : back === "/" ? "Back to your texts" : "Back";
+
   view.replaceChildren(
     ...[
+      h("p", { class: "crumb" }, h("a", { href: `#${back}` }, backLabel)),
       head,
       toolbar,
       text.translation &&

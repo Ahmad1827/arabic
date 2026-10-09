@@ -246,6 +246,7 @@ app.get("/api/texts/:id", async (req, res) => {
     id: text.id,
     title: text.title,
     mode: text.mode,
+    ref: text.ref,
     translation: text.translation,
     source: text.source,
     picture: Boolean(text.picture),
