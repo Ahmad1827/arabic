@@ -1,4 +1,5 @@
 import { LETTERS, LETTER_AUDIO, LETTER_SPOKEN, ALPHABET_GROUPS, TRAINER_LETTERS, letterForms } from "./letters.js";
+import { createPractice, unlockedGroups, KNOWN_AT } from "./practice.js";
 
 const view = document.getElementById("view");
 const panel = document.getElementById("panel");
@@ -83,6 +84,8 @@ const ICON_PATHS = {
   play: '<polygon points="7 4 20 12 7 20 7 4"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+  mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="m22 9-6 6M16 9l6 6"/>',
+  undo: '<path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><path d="m18 9-6 6M12 9l6 6"/>',
 };
 
 function icon(name) {
@@ -103,7 +106,7 @@ const stripMarks = (s) => s.replace(/[\p{M}ـ]/gu, "");
 const cardKey = (mode, vowelled) => `${mode}|${vowelled}`;
 
 function loadSettings() {
-  const defaults = { vowels: true, translit: true, gloss: false, translation: true, reciter: RECITERS[0][0], autoExplain: false };
+  const defaults = { vowels: true, translit: true, gloss: false, translation: true, reciter: RECITERS[0][0], autoExplain: false, sounds: true, classicCards: false };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem("reader-settings") || "{}") };
   } catch {
@@ -1089,130 +1092,6 @@ async function renderWords(token) {
   );
 }
 
-// ---- Review ---------------------------------------------------------------
-
-const GRADE_BUTTONS = [
-  ["again", "Again", "forgot it"],
-  ["hard", "Hard", "barely"],
-  ["good", "Good", "knew it"],
-  ["easy", "Easy", "instantly"],
-];
-
-function highlighted(sentence, word) {
-  const at = sentence.indexOf(word);
-  if (at === -1) return [sentence];
-  return [sentence.slice(0, at), h("mark", {}, word), sentence.slice(at + word.length)];
-}
-
-async function renderReview(token) {
-  const queue = await api("/review");
-  if (token !== renderToken) return;
-  let answered = 0;
-  let revealed = false;
-  let busy = false;
-
-  function finish() {
-    view.replaceChildren(
-      h("h1", {}, "Review"),
-      h(
-        "p",
-        { class: "summary" },
-        answered > 0
-          ? `Done. You answered ${answered} ${answered === 1 ? "card" : "cards"}; nothing else is due right now.`
-          : "Nothing is due right now. Save more words while reading, or come back later.",
-      ),
-      h("a", { class: "button", href: "#/" }, "Read something"),
-    );
-    refreshBadge();
-  }
-
-  async function grade(name) {
-    if (busy) return;
-    busy = true;
-    const card = queue[0];
-    try {
-      const { progress } = await api(`/review/${card.id}`, { method: "POST", body: { grade: name } });
-      onProgress(progress);
-      answered++;
-      queue.shift();
-      if (name === "again") queue.push(card); // ask again before the session ends
-      revealed = false;
-      show();
-    } catch (err) {
-      toast(err.message);
-    }
-    busy = false;
-  }
-
-  // Turning a card over also says the word, so sound and spelling stick together.
-  function reveal() {
-    revealed = true;
-    show();
-    playCard(queue[0], { quiet: true });
-  }
-
-  function show() {
-    if (queue.length === 0) return finish();
-    const card = queue[0];
-    const isQuranic = card.mode === "quranic" || card.mode === "hadith";
-
-    const back = revealed && [
-      h("p", { class: "panel-translit" }, card.translit),
-      h("p", { class: "panel-meaning" }, card.meaning),
-      card.note && h("p", { class: "note" }, card.note),
-      h("p", { class: "translation" }, card.sentence_translation),
-      h(
-        "div",
-        { class: "grades" },
-        GRADE_BUTTONS.map(([name, label, hint], n) =>
-          h("button", { type: "button", class: `grade ${name}`, onclick: () => grade(name) }, h("strong", {}, label), h("small", {}, `${hint} · ${n + 1}`)),
-        ),
-      ),
-    ];
-
-    view.replaceChildren(
-      h("p", { class: "muted" }, `${queue.length} ${queue.length === 1 ? "card" : "cards"} left`),
-      h(
-        "div",
-        { class: `card flashcard ${isQuranic ? "quranic" : ""}` },
-        h(
-          "div",
-          { class: "panel-head" },
-          h("span", { class: "big-ar", lang: "ar", dir: "rtl" }, card.vowelled),
-          cardAudioButton(card),
-        ),
-        h("p", { class: "context", lang: "ar", dir: "rtl" }, highlighted(card.sentence.replace(AYAH_MARK, ""), card.word)),
-        revealed
-          ? back
-          : h(
-              "button",
-              {
-                class: "primary",
-                type: "button",
-                onclick: reveal,
-              },
-              "Show answer",
-              h("small", {}, " · space"),
-            ),
-      ),
-    );
-  }
-
-  function onKey(event) {
-    if (token !== renderToken) return document.removeEventListener("keydown", onKey);
-    if (queue.length === 0) return;
-    if (!revealed && (event.key === " " || event.key === "Enter")) {
-      event.preventDefault();
-      reveal();
-    } else if (revealed && ["1", "2", "3", "4"].includes(event.key)) {
-      grade(GRADE_BUTTONS[Number(event.key) - 1][0]);
-    }
-  }
-  document.addEventListener("keydown", onKey);
-
-  show();
-}
-
 // ---- Library: Quran and hadith ---------------------------------------------
 
 // Opens a library text in the reader, downloading it the first time.
@@ -1530,28 +1409,6 @@ async function renderSettings(token) {
 
 // ---- Alphabet trainer -----------------------------------------------------
 
-const UNLOCK_AT = 2; // strength every letter needs before the next group opens
-const KNOWN_AT = 4;
-
-// How many letter groups are open: the first, plus each next one once all
-// letters before it have been answered correctly a couple of times.
-function unlockedGroups(strengths) {
-  let open = 1;
-  while (
-    open < ALPHABET_GROUPS.length &&
-    ALPHABET_GROUPS.slice(0, open).every((group) => group.letters.every((l) => (strengths[l] ?? 0) >= UNLOCK_AT))
-  ) {
-    open++;
-  }
-  return open;
-}
-
-const shuffled = (items) =>
-  items
-    .map((item) => [Math.random(), item])
-    .sort((a, b) => a[0] - b[0])
-    .map(([, item]) => item);
-
 function strengthMeter(strength) {
   return h(
     "span",
@@ -1613,181 +1470,27 @@ async function renderAlphabet(token) {
   );
 }
 
-// Chooses what to ask next. Weak letters come up more often, and new letters
-// are introduced one at a time, in order.
-function nextQuestion(strengths, introduced, lastLetter) {
-  const open = unlockedGroups(strengths);
-  const unlocked = ALPHABET_GROUPS.slice(0, open).flatMap((group) => group.letters);
-  const seen = unlocked.filter((l) => introduced.has(l));
-  const firstNew = unlocked.find((l) => !introduced.has(l));
+// ---- Practice rounds (alphabet and word review) live in practice.js ----------
 
-  let candidates = seen.map((l) => [l, 6 - (strengths[l] ?? 0)]);
-  if (firstNew) candidates.push([firstNew, seen.length === 0 ? 1 : 3]);
-  if (candidates.length > 1) candidates = candidates.filter(([l]) => l !== lastLetter);
-
-  let roll = Math.random() * candidates.reduce((sum, [, weight]) => sum + weight, 0);
-  const letter = candidates.find(([, weight]) => (roll -= weight) < 0)?.[0] ?? candidates[0][0];
-  if (!introduced.has(letter)) return { kind: "intro", letter };
-  return quizFor(letter, strengths, unlocked);
-}
-
-function quizFor(letter, strengths, unlocked) {
-  const strength = strengths[letter] ?? 0;
-  const group = ALPHABET_GROUPS.find((g) => g.letters.includes(letter)).letters;
-  // Wrong options: look-alikes from the same group first, then other letters.
-  const others = [...new Set([...shuffled(group), ...shuffled(unlocked), ...shuffled(TRAINER_LETTERS)])].filter((l) => l !== letter);
-  const forms = letterForms(letter);
-  return {
-    kind: strength > 0 && Math.random() < 0.5 ? "pick-letter" : "pick-sound",
-    letter,
-    form: strength >= UNLOCK_AT ? forms[Math.floor(Math.random() * forms.length)] : forms[0],
-    options: shuffled([letter, ...others.slice(0, 3)]),
-  };
-}
-
-async function renderAlphabetPractice(token) {
-  const strengths = await api("/letters");
-  if (token !== renderToken) return;
-  const introduced = new Set(Object.keys(strengths));
-  let question;
-  let picked = null;
-  let answered = 0;
-
-  function advance() {
-    picked = null;
-    question = nextQuestion(strengths, introduced, question?.letter);
-    show();
-  }
-
-  function gotIt() {
-    introduced.add(question.letter);
-    const open = unlockedGroups(strengths);
-    question = quizFor(question.letter, strengths, ALPHABET_GROUPS.slice(0, open).flatMap((g) => g.letters));
-    question.kind = "pick-sound";
-    show();
-  }
-
-  async function choose(option) {
-    if (picked) return;
-    picked = option;
-    const asked = question;
-    const correct = option === asked.letter;
-    show();
-    speakLetter(asked.letter, { quiet: true });
-    try {
-      const openBefore = unlockedGroups(strengths);
-      const result = await api("/letters/answer", { method: "POST", body: { letter: asked.letter, correct } });
-      strengths[asked.letter] = result.strength;
-      answered++;
-      onProgress(result.progress);
-      if (unlockedGroups(strengths) > openBefore) toast("New letters unlocked.");
-    } catch (err) {
-      toast(err.message);
-    }
-    if (correct) {
-      setTimeout(() => {
-        if (token === renderToken && question === asked) advance();
-      }, 900);
-    }
-  }
-
-  function show() {
-    const [name, sound] = LETTERS[question.letter];
-    const head = h(
-      "p",
-      { class: "muted practice-head" },
-      h("a", { href: "#/alphabet" }, "All letters"),
-      `${answered} answered this session`,
-    );
-
-    if (question.kind === "intro") {
-      view.replaceChildren(
-        head,
-        h(
-          "div",
-          { class: "card flashcard" },
-          h("p", { class: "muted" }, "New letter"),
-          h("div", { class: "panel-head" }, h("span", { class: "big-ar huge", lang: "ar" }, question.letter), iconButton("Listen", () => speakLetter(question.letter))),
-          h("p", { class: "panel-translit" }, name),
-          h("p", { class: "panel-meaning" }, `sounds like: ${sound}`),
-          formsRow(question.letter),
-          h("button", { class: "primary", type: "button", onclick: gotIt }, "Got it", h("small", {}, " · space")),
-        ),
-      );
-      speakLetter(question.letter, { quiet: true });
-      return;
-    }
-
-    const askSound = question.kind === "pick-sound";
-    const prompt = askSound
-      ? [
-          h("span", { class: "big-ar huge", lang: "ar" }, question.form.text),
-          h(
-            "p",
-            { class: "muted" },
-            question.form.where === "alone" ? "Which sound does this letter make?" : `Which letter is this? It is drawn the way it looks at the ${question.form.where} of a word.`,
-          ),
-        ]
-      : [h("p", { class: "ask-sound" }, h("strong", {}, name), ` · ${sound}`), h("p", { class: "muted" }, "Which letter is this?")];
-
-    view.replaceChildren(
-      head,
-      h(
-        "div",
-        { class: "card flashcard" },
-        prompt,
-        h(
-          "div",
-          { class: `choices${askSound ? "" : " letters-choice"}` },
-          question.options.map((option, n) => {
-            const state = !picked ? "" : option === question.letter ? " right" : option === picked ? " wrong" : " faded";
-            return h(
-              "button",
-              { type: "button", class: `choice${state}`, disabled: Boolean(picked), onclick: () => choose(option) },
-              askSound
-                ? [h("strong", {}, LETTERS[option][1]), h("small", {}, LETTERS[option][0])]
-                : h("span", { class: "letter", lang: "ar" }, option),
-              h("kbd", {}, String(n + 1)),
-            );
-          }),
-        ),
-        picked &&
-          h(
-            "div",
-            { class: "feedback" },
-            h(
-              "p",
-              { class: picked === question.letter ? "ok" : "error" },
-              picked === question.letter ? "Correct." : `Not quite. This is ${name}, which sounds like: ${sound}.`,
-            ),
-            picked !== question.letter && formsRow(question.letter),
-            h("button", { class: "primary", type: "button", onclick: advance }, "Next", h("small", {}, " · space")),
-          ),
-      ),
-    );
-  }
-
-  function onKey(event) {
-    if (token !== renderToken) return document.removeEventListener("keydown", onKey);
-    const forward = event.key === " " || event.key === "Enter";
-    if (question.kind === "intro") {
-      if (forward) {
-        event.preventDefault();
-        gotIt();
-      }
-    } else if (picked) {
-      if (forward) {
-        event.preventDefault();
-        advance();
-      }
-    } else if (["1", "2", "3", "4"].includes(event.key)) {
-      choose(question.options[Number(event.key) - 1]);
-    }
-  }
-  document.addEventListener("keydown", onKey);
-
-  advance();
-}
+const { renderAlphabetPractice, renderReview } = createPractice({
+  h,
+  api,
+  icon,
+  iconButton,
+  toast,
+  plural,
+  view,
+  settings,
+  saveSettings,
+  speakLetter,
+  playCard,
+  canSpeak,
+  onProgress,
+  refreshBadge,
+  alive: (token) => token === renderToken,
+  formsRow,
+  ayahMark: AYAH_MARK,
+});
 
 window.addEventListener("hashchange", route);
 route();

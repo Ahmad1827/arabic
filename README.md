@@ -27,7 +27,7 @@ Nothing is sent to the AI until you press "Translate and explain" under a senten
 - `src/documents.js`: reads dropped files (PDF, Word .docx, plain text, pictures). PDF text is rebuilt from where each glyph sits on the page, since Arabic PDFs rarely store their text in reading order. Scanned PDFs and photos of pages have no text inside, so their text is recognised with [Tesseract](https://github.com/naptha/tesseract.js) on your computer (its Arabic data, about 2.5 MB, is downloaded on first use); expect some wrong letters.
 - `src/text.js`: splits text into sentences and words.
 - `src/srs.js`: review scheduling.
-- `public/`: the interface (plain HTML, CSS and JavaScript, no build step).
+- `public/`: the interface (plain HTML, CSS and JavaScript, no build step). `practice.js` holds the exercise rounds for the alphabet and for reviewing saved words.
 
 `npm test` runs the tests for text splitting and scheduling.
 
