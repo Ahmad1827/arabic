@@ -133,3 +133,51 @@ test("AI settings: a saved key is kept when the field is left empty, and dropped
   assert.throws(() => checkConfig({ provider: "openai-compatible", baseUrl: "ftp://x", model: "m" }, null), /address/);
   assert.throws(() => checkConfig({ provider: "nope" }, null));
 });
+
+import { fixLigatures, pageLines } from "../src/documents.js";
+
+// A glyph as a PDF hands it over: text, position of its left edge, width.
+const glyph = (str, x, width = 10, y = 100, height = 20) => ({ str, transform: [1, 0, 0, 1, x, y], width, height });
+const lineOf = (...glyphs) => pageLines(glyphs).map((line) => line.text);
+
+test("PDF: Arabic drawn left to right across the page is put back in reading order", () => {
+  // "كتب 12" as drawn: the number on the left, then ب ت ك from left to right.
+  assert.deepEqual(lineOf(glyph("2", 10), glyph("1", 0), glyph("ﺐ", 30), glyph("ﺘ", 40), glyph("ﻛ", 50)), ["كتب 12"]);
+});
+
+test("PDF: glyph order in the file is ignored, only positions count", () => {
+  assert.deepEqual(lineOf(glyph("ﻛ", 50), glyph("ﺐ", 30), glyph("ﺘ", 40)), ["كتب"]);
+});
+
+test("PDF: brackets are un-mirrored and vowel marks go to the letter they sit on", () => {
+  assert.deepEqual(lineOf(glyph(")", 70, 5), glyph("ب", 60), glyph("ا", 50), glyph("(", 45, 5)), ["(با)"]);
+  assert.deepEqual(lineOf(glyph("ﻝ", 30), glyph(" َ", 41, 0, 104, 12), glyph("ﻗ", 40)), ["قَل"]);
+});
+
+test("PDF: an Arabic word inside an English line keeps its letters in order", () => {
+  assert.deepEqual(lineOf(glyph("the word", 0, 80), glyph("ب", 90), glyph("ا", 100), glyph("ب", 110), glyph("ok", 130, 20)), ["the word باب ok"]);
+});
+
+test("PDF: letters repeated where two pieces overlap are written once", () => {
+  assert.deepEqual(lineOf(glyph("كان ا", 100, 50), glyph("الناس", 55, 50)), ["كان الناس"]);
+});
+
+test("PDF: two-letter ligatures that arrive reversed are turned back", () => {
+  const cases = { "ملﺎ": "لمﺎ", "ﻋﺎمل": "ﻋﺎلم", "ﺗﻨﺎيس": "ﺗﻨﺎسي", "اﻟﻀﻤري": "اﻟﻀﻤير", "أﻋامل": "أﻋمال", "اﻷرسة": "اﻷسرة", "إىل ﻋﺎ": "إلى ﻋﺎ", "اﻻﻋرتاف": "اﻻﻋتراف" };
+  for (const [broken, fixed] of Object.entries(cases)) assert.equal(fixLigatures(broken), fixed, broken);
+});
+
+test("PDF: correctly ordered text is left alone", () => {
+  for (const fine of ["واﻟﺴﻼم", "ﻛﺎن", "دار ﻛﺒﻴﺮة", "في الكتاب", "ﻗﺎل ورد"]) assert.equal(fixLigatures(fine), fine, fine);
+});
+
+import { readDocument } from "../src/documents.js";
+
+test("documents: hidden control characters are removed, and files without Arabic are refused", async () => {
+  const file = (text) => Buffer.from(text, "utf8");
+  const document = await readDocument("notes.txt", file("﻿مرحبا\u0000 بكم‏\n\n  كتاب  جديد "));
+  assert.equal(document.body, "مرحبا بكم\nكتاب جديد");
+  assert.equal(document.title, "notes");
+  await assert.rejects(readDocument("notes.txt", file("hello")), /No Arabic/);
+  await assert.rejects(readDocument("film.mp4", file("مرحبا")), /cannot be read/);
+});

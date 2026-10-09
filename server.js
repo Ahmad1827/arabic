@@ -15,13 +15,16 @@ const { streaks } = await import("./src/streak.js");
 const { TRAINER_LETTERS } = await import("./public/letters.js");
 const library = await import("./src/library.js");
 const voice = await import("./src/voice.js");
+const documents = await import("./src/documents.js");
 
 const MAX_TEXT_CHARS = 20_000;
+const MAX_DOCUMENT_CHARS = 600_000; // a few hundred pages
 const DAY = 86_400_000;
 const GOAL_CHOICES = [5, 10, 20, 30];
 const DEFAULT_GOAL = 10;
 
 const db = openDb(process.env.DB_PATH || path.join(here, "data", "app.db"));
+const dataDir = path.dirname(process.env.DB_PATH || path.join(here, "data", "app.db"));
 const app = express();
 app.use(express.json({ limit: "200kb" }));
 app.use(express.static(path.join(here, "public")));
@@ -160,6 +163,52 @@ app.post("/api/texts", (req, res) => {
   res.status(201).json({ id: Number(lastInsertRowid) });
 });
 
+// A dropped file (PDF, Word, text, or a picture of a page): its text is pulled
+// out and becomes a text to read. Nothing is sent to any AI here; translating
+// stays a separate step. Scans can take minutes, so the work runs as a job the
+// page asks about until it is done.
+const documentJobs = new Map(); // id -> { state, stage, page, pages, textId, error }
+let nextJobId = 1;
+
+app.post("/api/documents", express.raw({ type: () => true, limit: "40mb" }), (req, res) => {
+  const mode = req.query.mode;
+  if (!(mode in MODES)) throw new HttpError(400, "Choose which kind of Arabic this is.");
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, "The file is empty.");
+
+  const id = String(nextJobId++);
+  const job = { state: "working", stage: "reading", page: 0, pages: 0 };
+  documentJobs.set(id, job);
+  documents
+    .readDocument(String(req.query.name || "document"), req.body, {
+      cacheDir: path.join(dataDir, "ocr"),
+      onProgress: (progress) => Object.assign(job, progress),
+    })
+    .then((document) => {
+      if (document.body.length > MAX_DOCUMENT_CHARS) {
+        throw new HttpError(413, `This document is too long to open in one piece (${document.body.length.toLocaleString()} characters; the limit is ${MAX_DOCUMENT_CHARS.toLocaleString()}). Split it into parts.`);
+      }
+      const title = String(req.query.title || "").trim() || document.title;
+      const { lastInsertRowid } = db
+        .prepare("INSERT INTO texts (title, mode, body, created_at, source) VALUES (?, ?, ?, ?, ?)")
+        .run(title, mode, document.body, Date.now(), document.source);
+      Object.assign(job, { state: "done", textId: Number(lastInsertRowid) });
+    })
+    .catch((err) => {
+      const expected = err instanceof HttpError || err instanceof documents.DocumentError;
+      if (!expected) console.error(err);
+      Object.assign(job, { state: "failed", error: expected ? err.message : "Something went wrong while reading the file." });
+    })
+    // Finished jobs are forgotten after a while.
+    .finally(() => setTimeout(() => documentJobs.delete(id), 10 * 60_000).unref());
+  res.status(202).json({ job: id });
+});
+
+app.get("/api/documents/jobs/:id", (req, res) => {
+  const job = documentJobs.get(req.params.id);
+  if (!job) throw new HttpError(404, "That file is no longer being read. Try dropping it again.");
+  res.json(job);
+});
+
 app.get("/api/texts/:id", async (req, res) => {
   const text = getText(req.params.id);
   const sentences = sentencesOf(text).map((sentence) => ({
@@ -268,6 +317,10 @@ app.post("/api/analyze", async (req, res) => {
 
   const cached = cachedAnalysis(text.mode, sentence);
   if (cached) return res.json(cached);
+  // Lines with no Arabic (page numbers, a stray English heading) are never sent anywhere.
+  if (!/\p{Script=Arabic}/u.test(sentence)) {
+    return res.json({ translation: "", words: tokenize(sentence).filter((t) => t.isWord).map(() => null) });
+  }
 
   const hash = hashOf(text.mode, sentence);
   if (!inFlight.has(hash)) {
@@ -289,8 +342,6 @@ app.post("/api/analyze", async (req, res) => {
 });
 
 // ---- Voice ------------------------------------------------------------------
-
-const dataDir = path.dirname(process.env.DB_PATH || path.join(here, "data", "app.db"));
 
 app.get("/api/voice", (req, res) => {
   res.json({ available: voice.voiceAvailable() });
@@ -379,10 +430,10 @@ app.get("/api/stats", (req, res) => {
 // ---- Errors ---------------------------------------------------------------
 
 app.use((err, req, res, next) => {
-  if (err instanceof HttpError || err instanceof AnalysisError || err instanceof library.LibraryError || err instanceof voice.VoiceError) {
+  if ([HttpError, AnalysisError, library.LibraryError, voice.VoiceError, documents.DocumentError].some((kind) => err instanceof kind)) {
     return res.status(err.status).json({ error: err.message });
   }
-  if (err.type === "entity.too.large") return res.status(413).json({ error: "That text is too long." });
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "That is too large. Files can be up to 40 MB." });
   console.error(err);
   res.status(500).json({ error: "Something went wrong in the app. Check the terminal for details." });
 });

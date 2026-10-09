@@ -383,6 +383,44 @@ async function renderHome(token) {
   );
   const submit = h("button", { class: "primary", type: "submit" }, "Read it");
 
+  // A dropped or chosen file is read on this computer and opened as a text.
+  const picker = h("input", { type: "file", accept: ".pdf,.docx,.txt,.md,.srt,.png,.jpg,.jpeg,.webp", hidden: true, onchange: () => openFile(picker.files[0]) });
+  const dropLabel = h("span", {}, "Drop a PDF, Word or text file, or a photo of a page, or ");
+  const drop = h(
+    "div",
+    { class: "drop" },
+    picker,
+    dropLabel,
+    h("button", { type: "button", class: "link", onclick: () => picker.click() }, "choose a file"),
+  );
+  const dropText = "Drop a PDF, Word or text file, or a photo of a page, or ";
+  async function openFile(file) {
+    if (!file || drop.classList.contains("loading")) return;
+    drop.classList.add("loading");
+    dropLabel.textContent = `Reading “${file.name}”… `;
+    try {
+      const query = new URLSearchParams({ name: file.name, mode: mode.value, title: title.value });
+      const response = await fetch(`/api/documents?${query}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+      const started = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(started.error || `The file could not be opened (${response.status}).`);
+
+      // Scans are read page by page, which can take a while: show how far it is.
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        const job = await api(`/documents/jobs/${started.job}`);
+        if (job.state === "done") return void (location.hash = `#/text/${job.textId}`);
+        if (job.state === "failed") throw new Error(job.error);
+        if (job.stage === "recognising") {
+          dropLabel.textContent = `This is a scan, so the text is being recognised: page ${job.page} of ${job.pages}… `;
+        }
+      }
+    } catch (err) {
+      toast(err.message, 8000);
+      drop.classList.remove("loading");
+      dropLabel.textContent = dropText;
+    }
+  }
+
   const form = h(
     "form",
     {
@@ -404,6 +442,7 @@ async function renderHome(token) {
     },
     h("h2", {}, "Read something"),
     body,
+    drop,
     h("div", { class: "row" }, title, mode, submit),
     h(
       "p",
@@ -469,6 +508,24 @@ async function renderHome(token) {
       step("Read something real", "Paste a text below and tap any word."),
       step("Review your words", "Saved words return just before you forget them."),
     );
+
+  // The whole card accepts a dropped file.
+  let dragDepth = 0;
+  form.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    dragDepth++;
+    form.classList.add("dragging");
+  });
+  form.addEventListener("dragover", (event) => event.preventDefault());
+  form.addEventListener("dragleave", () => {
+    if (--dragDepth <= 0) form.classList.remove("dragging");
+  });
+  form.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    form.classList.remove("dragging");
+    openFile(event.dataTransfer?.files?.[0]);
+  });
 
   const promoTile = (href, arabic, title, text) =>
     h("a", { class: "promo", href }, h("span", { class: "promo-ar", lang: "ar" }, arabic), h("strong", {}, title), h("span", {}, text));
@@ -544,8 +601,14 @@ async function renderText(id, token) {
       .join(" ");
   }
 
+  const hasArabic = (sentence) => /\p{Script=Arabic}/u.test(sentence.text);
+
   function draw(index) {
     const sentence = text.sentences[index];
+    // Page numbers kept from a PDF are shown as dividers, not as sentences.
+    const pageMark = sentence.text.match(/^⸻ (\d+) ⸻$/);
+    blocks[index].className = pageMark ? "page-mark" : "sentence";
+    if (pageMark) return blocks[index].replaceChildren(`Page ${pageMark[1]}`);
     const row = h("div", { class: "words", dir: "rtl", lang: "ar" });
     let wordIndex = 0;
     for (const token of sentence.tokens) {
@@ -597,6 +660,7 @@ async function renderText(id, token) {
         // Nothing is sent to the AI until this is pressed.
         !sentence.analysis &&
           !requested.has(index) &&
+          hasArabic(sentence) &&
           h("button", { class: "explain", type: "button", onclick: () => explain([index]) }, "Translate and explain"),
       ),
     );
@@ -711,7 +775,7 @@ async function renderText(id, token) {
   // Sends sentences to the AI. Only ever called from a button press, unless
   // the reader has switched on automatic translation in Settings.
   function explain(indexes) {
-    const fresh = indexes.filter((i) => !text.sentences[i].analysis && !requested.has(i));
+    const fresh = indexes.filter((i) => !text.sentences[i].analysis && !requested.has(i) && hasArabic(text.sentences[i]));
     if (pending.length + active === 0) total = 0;
     total += fresh.length;
     for (const i of fresh) requested.add(i);
@@ -736,7 +800,7 @@ async function renderText(id, token) {
         h("p", { class: "muted" }, `Working out the words… ${Math.max(0, total - pending.length - active)} of ${total} ready`),
       );
     } else {
-      const untouched = pageIndexes.filter((i) => !text.sentences[i].analysis && !requested.has(i));
+      const untouched = pageIndexes.filter((i) => !text.sentences[i].analysis && !requested.has(i) && hasArabic(text.sentences[i]));
       status.replaceChildren(
         ...(untouched.length
           ? [
@@ -883,8 +947,9 @@ async function renderText(id, token) {
     if (!playing) return;
     const { index, continuous, basmala } = playing;
     if (basmala) return playVerse(index, continuous);
-    if (!continuous || index + 1 >= text.sentences.length) return stopRecitation();
-    const next = index + 1;
+    let next = index + 1;
+    while (next < text.sentences.length && !hasArabic(text.sentences[next])) next++; // nothing to read in those
+    if (!continuous || next >= text.sentences.length) return stopRecitation();
     if (Math.floor(next / PAGE_SIZE) !== page) {
       page = Math.floor(next / PAGE_SIZE);
       showPage(true);
@@ -904,7 +969,9 @@ async function renderText(id, token) {
   function togglePlay() {
     if (!playing) {
       if (!text.surah && !canSpeak(text.mode)) return noVoiceNotice();
-      return playVerse(page * PAGE_SIZE, true, Boolean(text.surah?.basmala) && page === 0);
+      let first = page * PAGE_SIZE;
+      while (first < text.sentences.length - 1 && !hasArabic(text.sentences[first])) first++;
+      return playVerse(first, true, Boolean(text.surah?.basmala) && page === 0);
     }
     if (text.surah) {
       if (recitation.paused) recitation.play().catch(() => {});
