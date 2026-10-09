@@ -63,7 +63,8 @@ test("hard never lets the interval shrink or the ease drop below 1.3", () => {
 });
 
 import { streaks } from "../src/streak.js";
-import { letterForms, TRAINER_LETTERS, LETTERS } from "../public/letters.js";
+import { letterForms, TRAINER_LETTERS, LETTERS, LETTER_AUDIO, LETTER_SPOKEN } from "../public/letters.js";
+import { existsSync } from "node:fs";
 
 test("streak counts back from today, or from yesterday if today is not done yet", () => {
   assert.deepEqual(streaks(new Set([8, 9, 10]), 10), { streak: 3, best: 3 });
@@ -109,4 +110,26 @@ test("a Quran.com verse becomes a line with a word-for-word analysis", () => {
 test("a verse whose words do not line up gets no analysis instead of a shifted one", () => {
   const verse = { verse_number: 1, words: [{ char_type_name: "word", text_uthmani: "يَا أَيُّهَا" }], translations: [] };
   assert.equal(verseToLine(verse).analysis, null);
+});
+
+test("every trainer letter can be heard: a recording that exists, or a spoken name", () => {
+  for (const letter of TRAINER_LETTERS) {
+    const file = LETTER_AUDIO[letter];
+    if (file) assert.ok(existsSync(new URL(`../public/audio/letters/${file}.mp3`, import.meta.url)), `${letter}: ${file}.mp3`);
+    else assert.ok(LETTER_SPOKEN[letter], letter);
+  }
+  assert.equal(new Set(Object.values(LETTER_AUDIO)).size, 29);
+});
+
+import { checkConfig } from "../src/analyze.js";
+
+test("AI settings: a saved key is kept when the field is left empty, and dropped on switching", () => {
+  const saved = { provider: "anthropic", model: "", baseUrl: "", apiKey: "secret" };
+  assert.equal(checkConfig({ provider: "anthropic", apiKey: "" }, saved).apiKey, "secret");
+  assert.equal(checkConfig({ provider: "anthropic", apiKey: "new" }, saved).apiKey, "new");
+  assert.equal(checkConfig({ provider: "claude-code", apiKey: "x" }, saved).apiKey, "");
+  assert.equal(checkConfig({ provider: "openai-compatible", baseUrl: "https://x/v1", model: "m" }, saved).apiKey, "");
+  assert.throws(() => checkConfig({ provider: "anthropic" }, null), /key/);
+  assert.throws(() => checkConfig({ provider: "openai-compatible", baseUrl: "ftp://x", model: "m" }, null), /address/);
+  assert.throws(() => checkConfig({ provider: "nope" }, null));
 });

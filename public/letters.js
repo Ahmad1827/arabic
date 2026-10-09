@@ -68,3 +68,21 @@ export function letterForms(letter) {
   forms.push({ where: "end", text: JOINER + letter });
   return forms;
 }
+
+// A person saying each letter's name, in public/audio/letters/<file>.mp3.
+// Recordings by razunatmohammed88-cyber (MIT licence, see LICENSE.txt there),
+// trimmed and levelled for this app.
+export const LETTER_AUDIO = {
+  "ا": "alif", "ب": "ba", "ت": "ta", "ث": "tha", "ج": "jim", "ح": "hha", "خ": "kha",
+  "د": "dal", "ذ": "dhal", "ر": "ra", "ز": "zay", "س": "sin", "ش": "shin", "ص": "sad",
+  "ض": "dad", "ط": "tta", "ظ": "zza", "ع": "ayn", "غ": "ghayn", "ف": "fa", "ق": "qaf",
+  "ك": "kaf", "ل": "lam", "م": "mim", "ن": "nun", "ه": "ha", "و": "waw", "ي": "ya",
+  "ء": "hamza",
+};
+
+// The two signs without a recording are read by the voice, from their names
+// written the way they are said.
+export const LETTER_SPOKEN = {
+  "ة": "تَاءْ مَرْبُوطَهْ",
+  "ى": "أَلِفْ مَقْصُورَهْ",
+};
