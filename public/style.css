@@ -2438,3 +2438,12 @@ mark {
   min-height: 4.5rem;
   background: var(--surface);
 }
+
+/* The calligraphy on a home tile stays behind its text. */
+.promo strong,
+.promo > span:last-child {
+  position: relative;
+}
+.promo-ar {
+  pointer-events: none;
+}

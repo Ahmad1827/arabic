@@ -371,7 +371,13 @@ app.post("/api/analyze", async (req, res) => {
 // ---- Voice ------------------------------------------------------------------
 
 app.get("/api/voice", (req, res) => {
-  res.json({ available: voice.voiceAvailable() });
+  res.json({ available: voice.voiceAvailable(), installing: voice.installation });
+});
+
+// Installs the voice in the background; the Settings page watches /api/voice.
+app.post("/api/voice/install", (req, res) => {
+  if (!voice.voiceAvailable()) voice.installVoice().catch((err) => err instanceof voice.VoiceError || console.error(err));
+  res.status(202).json({ available: voice.voiceAvailable(), installing: voice.installation });
 });
 
 app.get("/api/tts", async (req, res) => {
@@ -462,13 +468,20 @@ app.use((err, req, res, next) => {
   }
   if (err.type === "entity.too.large") return res.status(413).json({ error: "That is too large. Files can be up to 40 MB." });
   console.error(err);
-  res.status(500).json({ error: "Something went wrong in the app. Check the terminal for details." });
+  res.status(500).json({ error: "Something went wrong in the app." });
 });
 
-const port = Number(process.env.PORT) || 3000;
+// PORT=0 lets the system pick any free port, which is what the desktop app does.
+const port = process.env.PORT === undefined ? 3000 : Number(process.env.PORT);
 const host = process.env.HOST || "127.0.0.1";
-app.listen(port, host, () => {
-  console.log(`Arabic reader running at http://localhost:${port}`);
-  if (voice.voiceAvailable()) voice.warmUp();
-  else console.log("No built-in voice yet. Run `npm run setup-voice` once to add one.");
+export const server = app.listen(port, host);
+// Resolves with the port the app is actually listening on.
+export const listening = new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.once("listening", () => {
+    console.log(`Arabic reader running at http://localhost:${server.address().port}`);
+    if (voice.voiceAvailable()) voice.warmUp();
+    else console.log("No built-in voice yet. It can be installed from Settings.");
+    resolve(server.address().port);
+  });
 });

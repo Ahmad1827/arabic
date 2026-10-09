@@ -202,7 +202,7 @@ function pickVoice(mode) {
 const canSpeak = (mode) => appVoice || Boolean(pickVoice(mode));
 
 function noVoiceNotice() {
-  toast("No Arabic voice is set up yet. In the project folder run: npm run setup-voice, then restart the app.", 9000);
+  toast("No Arabic voice is set up yet. It can be installed from Settings.", 8000);
 }
 
 function stopSpeaking() {
@@ -1614,6 +1614,44 @@ async function renderSettings(token) {
     result,
   );
 
+  // The voice: installed from here, with progress while it downloads.
+  const voiceCard = h("section", { class: "card" });
+  function paintVoice(state) {
+    const { available, installing } = state;
+    const start = async () => paintVoice(await api("/voice/install", { method: "POST" }));
+    voiceCard.replaceChildren(
+      ...[
+        h("h2", {}, "Voice"),
+        available
+          ? h("p", {}, "The app's own Arabic voice is installed, so reading aloud works everywhere.")
+          : installing.running
+            ? h(
+                "div",
+                {},
+                h("p", {}, installing.step, installing.percent > 0 && installing.percent < 100 ? ` ${installing.percent}%` : ""),
+                h("div", { class: "bar session-bar" }, h("div", { class: "bar-fill", style: `width: ${installing.percent}%` })),
+              )
+            : h(
+                "div",
+                {},
+                h("p", { class: "muted" }, "The app's own Arabic voice is not installed, so reading aloud depends on the voices your system has. Installing it downloads about 260 MB and needs Python on this computer."),
+                installing.error && h("p", { class: "error" }, installing.error),
+                h("button", { type: "button", class: "primary", onclick: start }, installing.error ? "Try again" : "Install the voice"),
+              ),
+        h("p", { class: "muted small" }, "Quran recitation uses real recordings and needs only an internet connection."),
+      ].filter(Boolean),
+    );
+    if (installing.running) {
+      setTimeout(async () => {
+        if (token !== renderToken) return;
+        const next = await api("/voice").catch(() => null);
+        if (next) paintVoice(next);
+        if (next?.available) appVoice = true; // usable at once, without reloading
+      }, 1000);
+    }
+  }
+  paintVoice(voice);
+
   view.replaceChildren(...[
     h("h1", {}, "Settings"),
     !ai.provider && h("p", { class: "note" }, "Nothing is chosen yet, so pasted texts and hadith cannot be explained. Pick one of the options below."),
@@ -1639,19 +1677,7 @@ async function renderSettings(token) {
         "Off: nothing is sent to your AI until you press “Translate and explain” under a sentence, or “Translate this page”. The Quran is never sent: its word meanings are built in.",
       ),
     ),
-    h(
-      "section",
-      { class: "card" },
-      h("h2", {}, "Voice"),
-      h(
-        "p",
-        { class: voice.available ? "" : "muted" },
-        voice.available
-          ? "The app's own Arabic voice is installed, so reading aloud works in every browser."
-          : "The app's own Arabic voice is not installed, so reading aloud depends on your browser. To add it, run “npm run setup-voice” in the project folder and restart the app.",
-      ),
-      h("p", { class: "muted small" }, "Quran recitation uses real recordings and needs only an internet connection."),
-    ),
+    voiceCard,
   ].filter(Boolean));
 }
 
