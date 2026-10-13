@@ -181,3 +181,32 @@ test("documents: hidden control characters are removed, and files without Arabic
   await assert.rejects(readDocument("notes.txt", file("hello")), /No Arabic/);
   await assert.rejects(readDocument("film.mp4", file("مرحبا")), /cannot be read/);
 });
+
+import { COURSES, MARK_CARRIERS, isLessonItem } from "../public/lessons.js";
+import { misreadings } from "../public/practice.js";
+
+test("courses: every item is unique, fully written out and recognised by its course", () => {
+  for (const course of COURSES) {
+    const items = course.units.flatMap((unit) => unit.items);
+    assert.equal(new Set(items.map((item) => item.id)).size, items.length, course.id);
+    for (const item of items) {
+      assert.ok(isLessonItem(course.id, item.id), item.id);
+      if (course.kind === "mark") {
+        // No two marks may read the same on the same letter.
+        assert.equal(new Set(items.map((other) => other.read(MARK_CARRIERS[0][1]))).size, items.length);
+      } else {
+        assert.match(item.ar, /^[\p{Script=Arabic}\p{M} ]+؟?$/u, item.ar);
+        assert.ok(item.translit && item.meaning, item.ar);
+        assert.equal(item.ar.includes(" "), course.kind === "phrase", item.ar);
+      }
+    }
+  }
+  assert.equal(isLessonItem("words", "nothing"), false);
+  assert.equal(isLessonItem("nothing", "بَيْت"), false);
+});
+
+test("misreadings keep the consonants and change one vowel", () => {
+  const wrong = misreadings("kitāb", 20);
+  assert.deepEqual([...wrong].sort(), ["katāb", "kitab", "kitīb", "kitūb", "kutāb", "kītāb"].sort());
+  assert.equal(misreadings("umm").length, 3);
+});

@@ -1816,6 +1816,151 @@ mark {
   background: var(--gold-bright);
 }
 
+/* ---- Practice: the list of courses and units ---- */
+
+.course {
+  margin-top: 2.2rem;
+}
+.course > .button {
+  margin-top: 0.9rem;
+}
+.unit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+}
+.unit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-inline-start: 4px solid var(--gold-bright);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.unit-card:hover {
+  border-color: var(--gold);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.unit-card.done {
+  border-inline-start-color: var(--accent);
+}
+.unit-card strong {
+  font-family: var(--display);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.unit-card > span {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.unit-card .unit-sample {
+  font-family: var(--arabic);
+  font-size: 1.45rem;
+  line-height: 1.9;
+  color: var(--accent);
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.unit-bar {
+  height: 0.3rem;
+  margin-top: auto;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.unit-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--gold-bright);
+}
+.unit-card small {
+  font-weight: 600;
+  color: var(--gold);
+}
+
+/* ---- Practice: questions about words and sentences ---- */
+
+.ask-sound.long {
+  font-size: 1.35rem;
+  line-height: 1.4;
+}
+.phrase-option {
+  font-family: var(--arabic);
+  font-size: 1.6rem;
+  line-height: 1.9;
+  font-weight: 400;
+}
+.match .small {
+  font-size: 1.7rem !important;
+  line-height: 1.6;
+}
+.match .phrase-option.small {
+  font-size: 1.25rem !important;
+}
+.built.sentence {
+  min-width: 14rem;
+  font-size: 1.9rem;
+  line-height: 2.2;
+}
+.tile.word-tile {
+  width: auto;
+  height: auto;
+  min-height: 3.2rem;
+  padding: 0.2rem 0.9rem 0.45rem;
+  font-size: 1.6rem;
+  line-height: 1.7;
+}
+.context.gapped {
+  font-size: 2rem;
+  color: var(--ink);
+  margin-bottom: 0.25rem;
+}
+.gap {
+  display: inline-block;
+  min-width: 4.5rem;
+  border-bottom: 3px dashed var(--gold-bright);
+  text-align: center;
+}
+.gap.right {
+  color: var(--accent);
+  border-bottom: 3px solid var(--accent);
+}
+.gap.wrong {
+  color: var(--danger);
+  border-bottom: 3px solid var(--danger);
+}
+.lesson-answer {
+  margin: 0.25rem 0 0;
+  font-family: var(--arabic);
+  font-size: 2.6rem;
+  line-height: 1.7;
+}
+.lesson-answer.phrase {
+  font-size: 1.7rem;
+  line-height: 2;
+}
+.missed-items {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+}
+.missed-items span {
+  font-family: var(--arabic);
+  font-size: 1.4rem;
+  color: var(--ink);
+  margin-inline-end: 0.35rem;
+}
+
 /* ---- Toast ---- */
 
 #toast {

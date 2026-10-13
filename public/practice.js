@@ -1,8 +1,10 @@
-// The practice rounds: the alphabet trainer and the review of saved words.
-// Both are short game-like sessions built from several kinds of question,
-// with a progress bar, a run counter, sounds and a results screen.
+// The practice rounds: the alphabet trainer, the courses (vowel marks, words
+// and phrases) and the review of saved words. All are short game-like sessions
+// built from several kinds of question, with a progress bar, a run counter,
+// sounds and a results screen.
 
 import { LETTERS, LETTER_AUDIO, ALPHABET_GROUPS, TRAINER_LETTERS, letterForms } from "./letters.js";
+import { courseById, MARK_CARRIERS } from "./lessons.js";
 
 export const UNLOCK_AT = 2; // strength every letter needs before the next group opens
 export const KNOWN_AT = 4;
@@ -44,6 +46,27 @@ const WORDS = [
 const isLetter = (glyph, letter) => glyph === letter || (letter === "ا" && "أإآ".includes(glyph));
 const wordsWith = (letter) => WORDS.filter(([word]) => Array.from(word).some((glyph) => isLetter(glyph, letter)));
 
+// Wrong ways to read a word: the same consonants with one vowel changed, or
+// made long or short. Only the vowel marks tell them apart from the right one.
+const SHORT_VOWELS = "aiu";
+const LONG_VOWELS = "āīū";
+export function misreadings(translit, count = 3) {
+  const chars = Array.from(translit);
+  const variants = new Set();
+  chars.forEach((char, at) => {
+    const short = SHORT_VOWELS.indexOf(char);
+    const long = LONG_VOWELS.indexOf(char);
+    if (short === -1 && long === -1) return;
+    const swapped = (vowel) => [...chars.slice(0, at), vowel, ...chars.slice(at + 1)].join("");
+    for (const vowel of short === -1 ? LONG_VOWELS : SHORT_VOWELS) variants.add(swapped(vowel));
+    variants.add(swapped(short === -1 ? SHORT_VOWELS[long] : LONG_VOWELS[short]));
+  });
+  variants.delete(translit);
+  return shuffled([...variants]).slice(0, count);
+}
+
+const PRAISE = ["Correct.", "Yes.", "That's it.", "Right."];
+
 const GRADE_BUTTONS = [
   ["again", "Again", "forgot it"],
   ["hard", "Hard", "barely"],
@@ -52,7 +75,7 @@ const GRADE_BUTTONS = [
 ];
 
 export function createPractice(ctx) {
-  const { h, api, icon, iconButton, toast, plural, view, settings, saveSettings, speakLetter, playCard, canSpeak, onProgress, refreshBadge, alive, formsRow, ayahMark } = ctx;
+  const { h, api, icon, iconButton, toast, plural, view, settings, saveSettings, speak, speakLetter, playCard, canSpeak, onProgress, refreshBadge, alive, formsRow, ayahMark } = ctx;
 
   // ---- Sounds ---------------------------------------------------------------
 
@@ -227,6 +250,120 @@ export function createPractice(ctx) {
     return { element: h("div", { class: `choices${wide ? " wide" : ""}` }, buttons), choose };
   }
 
+  // Tiles tapped in order to rebuild `target`: the letters of a word, or (with
+  // a space as `joiner`) the words of a sentence. `extra` tiles do not belong.
+  function tileBuilder({ target, extra = [], joiner = "", onDone }) {
+    let tiles = shuffled([...target, ...extra].map((text, id) => ({ text, id })));
+    if (tiles.map((t) => t.text).join(joiner) === target.join(joiner)) tiles = tiles.reverse();
+    const placed = [];
+    let finished = false;
+    const built = h("div", { class: `built${joiner ? " sentence" : ""}`, lang: "ar", dir: "rtl" });
+    const tileButtons = tiles.map((tile) =>
+      h("button", { type: "button", class: `tile${joiner ? " word-tile" : ""}`, lang: "ar", onclick: () => place(tile) }, tile.text),
+    );
+    const undoButton = iconButton(joiner ? "Remove the last word" : "Remove the last letter", undo, "undo");
+
+    function paint() {
+      // Shown as running text, so letters join up as they are added.
+      built.replaceChildren(placed.map((t) => t.text).join(joiner) || " ");
+      built.classList.toggle("empty", placed.length === 0);
+      tiles.forEach((tile, i) => (tileButtons[i].disabled = finished || placed.includes(tile)));
+      undoButton.disabled = finished || placed.length === 0;
+    }
+    function place(tile) {
+      if (finished || placed.includes(tile)) return;
+      placed.push(tile);
+      if (placed.length === target.length) {
+        finished = true;
+        const correct = placed.map((t) => t.text).join(joiner) === target.join(joiner);
+        built.classList.add(correct ? "right" : "wrong");
+        paint();
+        return onDone(correct);
+      }
+      paint();
+    }
+    function undo() {
+      if (finished) return;
+      placed.pop();
+      paint();
+    }
+
+    paint();
+    return {
+      elements: [h("div", { class: "built-row" }, built, undoButton), h("div", { class: "tiles", dir: "rtl" }, tileButtons)],
+      keys: { back: undo, choose: (n) => tiles[n] && place(tiles[n]) },
+    };
+  }
+
+  // A board of pairs to join up, left column to right column. `record` is told
+  // each pair found and whether it was found without a slip.
+  function matchBoard({ session, token, title, items, left, right, onLeft, record, next }) {
+    const card = h("div", { class: "card flashcard" });
+    const slipped = new Set();
+    const matched = new Set();
+    const buttons = [];
+    let chosen = { left: null, right: null };
+    const make = (side, item, content) => {
+      const button = h("button", { type: "button", class: "match", onclick: () => choose(side, item) }, content);
+      buttons.push({ side, item, button });
+      return button;
+    };
+    const leftButtons = shuffled(items).map((item) => make("left", item, left(item)));
+    const rightButtons = shuffled(items).map((item) => make("right", item, right(item)));
+    const buttonFor = (side, item) => buttons.find((b) => b.side === side && b.item === item).button;
+
+    function choose(side, item) {
+      if (matched.has(item)) return;
+      chosen[side] = item;
+      buttons.forEach((b) => b.button.classList.toggle("picked", !b.button.disabled && chosen[b.side] === b.item));
+      if (side === "left") onLeft?.(item);
+      if (!chosen.left || !chosen.right) return;
+
+      const pair = [buttonFor("left", chosen.left), buttonFor("right", chosen.right)];
+      if (chosen.left === chosen.right) {
+        const found = chosen.left;
+        matched.add(found);
+        pair.forEach((b) => {
+          b.disabled = true;
+          b.classList.remove("picked");
+          b.classList.add("right");
+        });
+        // A pair found only after a slip counts as missed.
+        const clean = !slipped.has(found);
+        if (clean) session.answer(true);
+        record(found, clean);
+      } else {
+        for (const item of [chosen.left, chosen.right]) {
+          if (!slipped.has(item)) {
+            slipped.add(item);
+            session.answer(false);
+          }
+        }
+        pair.forEach((b) => {
+          b.classList.remove("picked", "shake");
+          void b.offsetWidth;
+          b.classList.add("shake");
+        });
+      }
+      chosen = { left: null, right: null };
+      if (matched.size === items.length) {
+        let moved = false;
+        const forward = () => {
+          if (moved) return;
+          moved = true;
+          next();
+        };
+        session.keys = { forward };
+        card.append(h("div", { class: "feedback" }, h("button", { class: "primary", type: "button", onclick: forward }, "Continue", h("small", {}, " · space"))));
+        setTimeout(() => alive(token) && forward(), 1200);
+      }
+    }
+
+    session.keys = {};
+    card.append(h("p", { class: "eyebrow" }, title), h("div", { class: "match-grid" }, h("div", { class: "match-col" }, leftButtons), h("div", { class: "match-col" }, rightButtons)));
+    session.show(card);
+  }
+
   // ---- Alphabet -----------------------------------------------------------------
 
   async function renderAlphabetPractice(token) {
@@ -276,7 +413,7 @@ export function createPractice(ctx) {
       const feedback = h(
         "div",
         { class: "feedback" },
-        h("p", { class: correct ? "ok" : "error" }, correct ? pick(["Correct.", "Yes.", "That's it.", "Right."]) : `This is ${nameOf(letter)}, which sounds like: ${soundOf(letter)}.`),
+        h("p", { class: correct ? "ok" : "error" }, correct ? pick(PRAISE) : `This is ${nameOf(letter)}, which sounds like: ${soundOf(letter)}.`),
         !correct && formsRow(letter),
         h("button", { class: "primary", type: "button", onclick: forward }, "Continue", h("small", {}, " · space")),
       );
@@ -406,73 +543,17 @@ export function createPractice(ctx) {
 
     // Match four letters to their names.
     function matchQuestion(letters) {
-      const card = h("div", { class: "card flashcard" });
-      const slipped = new Set();
-      const matched = new Set();
-      let chosen = { letter: null, name: null };
-      const make = (side, letter, content) => {
-        const button = h("button", { type: "button", class: `match ${side}`, onclick: () => choose(side, letter) }, content);
-        button.dataset.letter = letter;
-        return button;
-      };
-      const letterButtons = shuffled(letters).map((l) => make("letter", l, h("span", { class: "letter", lang: "ar" }, l)));
-      const nameButtons = shuffled(letters).map((l) => make("name", l, [h("strong", {}, nameOf(l)), h("small", {}, soundOf(l))]));
-      const all = [...letterButtons, ...nameButtons];
-      const buttonFor = (side, letter) => all.find((b) => b.classList.contains(side) && b.dataset.letter === letter);
-
-      function choose(side, letter) {
-        if (matched.has(letter) && buttonFor(side, letter).disabled) return;
-        chosen[side] = letter;
-        all.forEach((b) => b.classList.toggle("picked", !b.disabled && chosen[b.classList.contains("letter") ? "letter" : "name"] === b.dataset.letter));
-        if (side === "letter") speakLetter(letter, { quiet: true });
-        if (!chosen.letter || !chosen.name) return;
-
-        const pair = [buttonFor("letter", chosen.letter), buttonFor("name", chosen.name)];
-        if (chosen.letter === chosen.name) {
-          const letterDone = chosen.letter;
-          matched.add(letterDone);
-          pair.forEach((b) => {
-            b.disabled = true;
-            b.classList.remove("picked");
-            b.classList.add("right");
-          });
-          // A pair found only after a slip counts as missed.
-          const clean = !slipped.has(letterDone);
-          if (clean) session.answer(true);
-          record(letterDone, clean);
-        } else {
-          for (const l of [chosen.letter, chosen.name]) {
-            if (!slipped.has(l)) {
-              slipped.add(l);
-              session.answer(false);
-            }
-          }
-          pair.forEach((b) => {
-            b.classList.remove("picked", "shake");
-            void b.offsetWidth;
-            b.classList.add("shake");
-          });
-        }
-        chosen = { letter: null, name: null };
-        if (matched.size === letters.length) {
-          let moved = false;
-          const forward = () => {
-            if (moved) return;
-            moved = true;
-            next();
-          };
-          session.keys = { forward };
-          card.append(h("div", { class: "feedback" }, h("button", { class: "primary", type: "button", onclick: forward }, "Continue", h("small", {}, " · space"))));
-          setTimeout(() => alive(token) && forward(), 1200);
-        }
-      }
-
-      session.keys = {};
-      card.append(
-        h("p", { class: "eyebrow" }, "Match each letter to its name"),
-        h("div", { class: "match-grid" }, h("div", { class: "match-col" }, letterButtons), h("div", { class: "match-col" }, nameButtons)),
-      );
-      session.show(card);
+      matchBoard({
+        session,
+        token,
+        title: "Match each letter to its name",
+        items: letters,
+        left: (l) => h("span", { class: "letter", lang: "ar" }, l),
+        right: (l) => [h("strong", {}, nameOf(l)), h("small", {}, soundOf(l))],
+        onLeft: (l) => speakLetter(l, { quiet: true }),
+        record,
+        next,
+      });
     }
 
     function finish() {
@@ -527,6 +608,357 @@ export function createPractice(ctx) {
         if (forms.length > 2) kinds.push(() => shapeQuestion(letter));
       }
       pick(kinds)();
+    }
+
+    next();
+  }
+
+  // ---- Courses: vowel marks, words and phrases -------------------------------------
+
+  // One round over a unit of a course, or (unit "mixed") over everything met so far.
+  async function renderLesson(token, courseId, unitId) {
+    const course = courseById(courseId);
+    const unit = course?.units.find((u) => u.id === unitId);
+    if (!course || (!unit && unitId !== "mixed")) {
+      location.hash = "#/practice";
+      return;
+    }
+    const strengths = (await api("/lessons"))[course.id];
+    if (!alive(token)) return;
+
+    const isMark = course.kind === "mark";
+    const isPhrase = course.kind === "phrase";
+    const homeOf = new Map(course.units.flatMap((u) => u.items.map((item) => [item, u])));
+    const met = [...homeOf.keys()].filter((item) => item.id in strengths);
+    const items = unit ? unit.items : met.length ? met : course.units[0].items;
+    const introduced = new Set(met);
+    const session = startSession({ token, total: ROUND_LENGTH, back: "#/practice" });
+    const missed = new Set();
+    let asked = 0;
+    let lastItem = null;
+    let lastKind = null;
+    // A mark is shown on a different consonant in every question.
+    let carrier = MARK_CARRIERS[0];
+
+    const strengthOf = (item) => strengths[item.id] ?? 0;
+    const arabicOf = (item) => (isMark ? item.write(carrier[0]) : item.ar);
+    const readingOf = (item) => (isMark ? item.read(carrier[1]) : item.translit);
+    const meaningOf = (item) => (isMark ? `${item.name}: ${item.about}` : item.meaning);
+    const wordsIn = (item) => item.ar.replace(/[؟.!،]/g, "").split(" ");
+    const say = (item, options) => !isMark && speak(item.ar.replace(/[؟.!،]/g, ""), undefined, options);
+    const arabic = (item, size = "") => h("span", { class: `${isPhrase ? "phrase-option" : "letter word-option"} ${size}`, lang: "ar", dir: "rtl" }, arabicOf(item));
+
+    async function record(item, correct) {
+      if (!correct) missed.add(item);
+      try {
+        const result = await api("/lessons/answer", { method: "POST", body: { course: course.id, item: item.id, correct } });
+        strengths[item.id] = result.strength;
+        onProgress(result.progress);
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+
+    // Wrong options: from the same unit first, then earlier units, and later
+    // ones only when that leaves too few to choose between.
+    function rivals(item, count = 3) {
+      const at = course.units.indexOf(homeOf.get(item));
+      const near = [...shuffled(homeOf.get(item).items), ...shuffled(course.units.slice(0, at).flatMap((u) => u.items))];
+      const far = shuffled(course.units.slice(at + 1).flatMap((u) => u.items));
+      const chosen = [];
+      for (const other of near.length > 2 ? near : [...near, ...far]) {
+        if (other !== item && meaningOf(other) !== meaningOf(item) && !chosen.some((c) => meaningOf(c) === meaningOf(other))) chosen.push(other);
+        if (chosen.length === count) break;
+      }
+      return chosen;
+    }
+
+    // After any answer: show what it was, then move on (at once if it was right).
+    function conclude(item, correct, card) {
+      session.answer(correct);
+      record(item, correct);
+      afterChime(() => alive(token) && say(item, { quiet: true }));
+      let moved = false;
+      const forward = () => {
+        if (moved) return;
+        moved = true;
+        next();
+      };
+      session.keys = { forward };
+      card.append(
+        h(
+          "div",
+          { class: "feedback" },
+          h("p", { class: correct ? "ok" : "error" }, correct ? pick(PRAISE) : "Not quite. Here it is:"),
+          !correct && h("p", { class: `lesson-answer${isPhrase ? " phrase" : ""}`, lang: "ar", dir: "rtl" }, arabicOf(item)),
+          h("p", { class: "muted" }, h("strong", {}, readingOf(item)), ` · ${meaningOf(item)}`),
+          h("button", { class: "primary", type: "button", onclick: forward }, "Continue", h("small", {}, " · space")),
+        ),
+      );
+      if (correct) setTimeout(() => alive(token) && forward(), isPhrase ? 2200 : 1300);
+    }
+
+    function introQuestion(item) {
+      const gotIt = () => {
+        introduced.add(item);
+        asked++;
+        (isMark ? readQuestion : meaningQuestion)(item);
+      };
+      session.keys = { forward: gotIt };
+      session.show(
+        h(
+          "div",
+          { class: "card flashcard" },
+          h("p", { class: "eyebrow" }, isMark ? "New mark" : isPhrase ? "New phrase" : "New word"),
+          h(
+            "div",
+            { class: "panel-head" },
+            h("span", { class: `big-ar${isPhrase ? "" : " huge"}`, lang: "ar", dir: "rtl" }, arabicOf(item)),
+            !isMark && iconButton("Listen", () => say(item)),
+          ),
+          h("p", { class: "panel-translit" }, readingOf(item)),
+          h("p", { class: "panel-meaning" }, meaningOf(item)),
+          // The same mark on a few other letters.
+          isMark &&
+            h(
+              "span",
+              { class: "forms", dir: "rtl" },
+              shuffled(MARK_CARRIERS.filter((c) => c !== carrier))
+                .slice(0, 3)
+                .map(([letter, latin]) => h("span", { class: "form" }, h("span", { class: "form-glyph", lang: "ar" }, item.write(letter)), h("small", { dir: "ltr" }, item.read(latin)))),
+            ),
+          h("button", { class: "primary", type: "button", onclick: gotIt }, "Got it", h("small", {}, " · space")),
+        ),
+      );
+      say(item, { quiet: true });
+    }
+
+    // A question with up to four buttons to choose from.
+    function ask(item, { title, prompt, options, correct = item, label, wide, onShown }) {
+      const card = h("div", { class: "card flashcard" });
+      const answers = choices({ options: shuffled(options), correct, label, wide, onPick: (right) => conclude(item, right, card) });
+      session.keys = { choose: answers.choose };
+      card.append(h("p", { class: "eyebrow" }, title), prompt, answers.element);
+      session.show(card);
+      onShown?.();
+    }
+    const replayButton = (item) =>
+      h("button", { class: "listen-btn", type: "button", title: "Play again", "aria-label": "Play again", onclick: () => say(item) }, icon("speaker"));
+    const shown = (item) => h("div", { class: "panel-head" }, h("span", { class: `big-ar${isPhrase ? "" : " huge"}`, lang: "ar", dir: "rtl" }, arabicOf(item)));
+
+    // See it written, choose how it is read.
+    function readQuestion(item) {
+      if (isMark) {
+        return ask(item, {
+          title: "How is this read?",
+          prompt: shown(item),
+          options: [item, ...rivals(item)],
+          label: (option) => [h("strong", {}, readingOf(option)), h("small", {}, option.name)],
+        });
+      }
+      ask(item, {
+        title: "How is this read? Look at the vowel marks.",
+        prompt: shown(item),
+        options: [item.translit, ...misreadings(item.translit)],
+        correct: item.translit,
+        label: (option) => h("strong", {}, option),
+      });
+    }
+
+    // See how it is read, choose the one written that way.
+    function spellingQuestion(item) {
+      ask(item, {
+        title: isMark ? "Which one is read like this?" : "Which word is read like this?",
+        prompt: h("p", { class: "ask-sound" }, readingOf(item)),
+        options: [item, ...rivals(item)],
+        label: (option) => arabic(option),
+      });
+    }
+
+    // See the Arabic, choose what it means.
+    function meaningQuestion(item) {
+      ask(item, {
+        title: isPhrase ? "What does this mean?" : "What does this word mean?",
+        prompt: shown(item),
+        options: [item, ...rivals(item)],
+        wide: true,
+        label: (option) => h("span", {}, option.meaning),
+      });
+    }
+
+    // See the meaning, choose the Arabic.
+    function arabicQuestion(item) {
+      ask(item, {
+        title: isPhrase ? "How do you say this?" : "Which word means this?",
+        prompt: h("p", { class: `ask-sound${isPhrase ? " long" : ""}` }, item.meaning),
+        options: [item, ...rivals(item)],
+        wide: isPhrase,
+        label: (option) => arabic(option),
+      });
+    }
+
+    // Hear it, choose what it means (or, for a word, which word it was).
+    function listenQuestion(item) {
+      const byMeaning = isPhrase || Math.random() < 0.5;
+      ask(item, {
+        title: byMeaning ? "Listen. What does it mean?" : "Listen. Which word did you hear?",
+        prompt: replayButton(item),
+        options: [item, ...rivals(item)],
+        wide: byMeaning,
+        label: (option) => (byMeaning ? h("span", {}, option.meaning) : arabic(option)),
+        onShown: () => say(item, { quiet: true }),
+      });
+    }
+
+    // See the meaning, spell the word from its letters.
+    function buildQuestion(item) {
+      const card = h("div", { class: "card flashcard" });
+      const builder = tileBuilder({ target: Array.from(stripMarks(item.ar)), onDone: (correct) => conclude(item, correct, card) });
+      session.keys = builder.keys;
+      card.append(
+        h("p", { class: "eyebrow" }, "Build the word, first letter first"),
+        h("p", { class: "ask-sound" }, item.meaning, " ", iconButton("Listen to this word", () => say(item))),
+        ...builder.elements,
+      );
+      session.show(card);
+    }
+
+    // Words of other phrases in the unit that could not be mistaken for one of this phrase's.
+    function strangers(item) {
+      const own = new Set(wordsIn(item).map(stripMarks));
+      const others = homeOf.get(item).items.filter((other) => other !== item).flatMap(wordsIn);
+      const unique = [];
+      for (const word of shuffled(others)) {
+        if (!own.has(stripMarks(word)) && !unique.some((u) => stripMarks(u) === stripMarks(word))) unique.push(word);
+      }
+      return unique;
+    }
+
+    // See the meaning, put the words of the sentence in order.
+    function orderQuestion(item) {
+      const card = h("div", { class: "card flashcard" });
+      const builder = tileBuilder({
+        target: wordsIn(item),
+        extra: strangers(item).slice(0, 2),
+        joiner: " ",
+        onDone: (correct) => conclude(item, correct, card),
+      });
+      session.keys = builder.keys;
+      card.append(
+        h("p", { class: "eyebrow" }, `Put the words in order (${plural(wordsIn(item).length, "word")}; some tiles do not belong)`),
+        h("p", { class: "ask-sound long" }, item.meaning),
+        ...builder.elements,
+      );
+      session.show(card);
+    }
+
+    // See the sentence with one word taken out, choose the word that belongs there.
+    function gapQuestion(item) {
+      const parts = wordsIn(item);
+      const at = Math.floor(Math.random() * parts.length);
+      const gap = h("span", { class: "gap" }, " ");
+      const card = h("div", { class: "card flashcard" });
+      const answers = choices({
+        options: shuffled([parts[at], ...strangers(item).slice(0, 3)]),
+        correct: parts[at],
+        label: (option) => h("span", { class: "letter word-option", lang: "ar", dir: "rtl" }, option),
+        onPick: (correct) => {
+          gap.textContent = parts[at];
+          gap.classList.add(correct ? "right" : "wrong");
+          conclude(item, correct, card);
+        },
+      });
+      session.keys = { choose: answers.choose };
+      card.append(
+        h("p", { class: "eyebrow" }, "Which word is missing?"),
+        h("p", { class: "context gapped", lang: "ar", dir: "rtl" }, parts.flatMap((word, i) => [i > 0 && " ", i === at ? gap : word]), item.ar.endsWith("؟") && "؟"),
+        h("p", { class: "ask-sound long" }, item.meaning),
+        answers.element,
+      );
+      session.show(card);
+    }
+
+    // Join up a few items with how they are read, or with what they mean.
+    function boardQuestion(chosen) {
+      matchBoard({
+        session,
+        token,
+        title: isMark ? "Match each one to how it is read" : isPhrase ? "Match each phrase to its meaning" : "Match each word to its meaning",
+        items: chosen,
+        left: (item) => arabic(item, "small"),
+        right: (item) => (isMark ? [h("strong", {}, readingOf(item)), h("small", {}, item.name)] : h("span", {}, item.meaning)),
+        onLeft: (item) => say(item, { quiet: true }),
+        record,
+        next,
+      });
+    }
+
+    function finish() {
+      const accuracy = session.score.right / Math.max(1, session.score.right + session.score.wrong);
+      const learned = items.filter((item) => strengthOf(item) >= KNOWN_AT).length;
+      const following = unit && course.units[course.units.indexOf(unit) + 1];
+      carrier = MARK_CARRIERS[0];
+      session.results({
+        title: accuracy === 1 ? "A perfect round" : accuracy >= 0.8 ? "Well done" : accuracy >= 0.5 ? "Good practice" : "Keep going",
+        details: [
+          h("p", { class: "note" }, `${unit ? unit.title : course.title}: ${learned} of ${items.length} learned.`),
+          missed.size > 0 &&
+            h(
+              "div",
+              { class: "muted" },
+              "Worth another look:",
+              h("ul", { class: "missed-items" }, [...missed].map((item) => h("li", {}, h("span", { lang: "ar", dir: "rtl" }, arabicOf(item)), ` ${readingOf(item)}${isMark ? "" : ` · ${item.meaning}`}`))),
+            ),
+        ],
+        actions: [
+          h("button", { class: "primary", type: "button", onclick: () => renderLesson(token, courseId, unitId) }, "Another round"),
+          following && learned === items.length && h("a", { class: "button", href: `#/practice/${course.id}/${following.id}` }, `Next: ${following.title}`),
+          h("a", { class: "button secondary", href: "#/practice" }, "All practice"),
+        ],
+      });
+    }
+
+    // Chooses what to ask next. Weak items come up more often, new ones are
+    // introduced one at a time, and the kind of question keeps changing.
+    function next() {
+      if (asked >= ROUND_LENGTH) return finish();
+      if (asked > 0) session.advance();
+      carrier = pick(MARK_CARRIERS);
+      const seen = items.filter((item) => introduced.has(item));
+      const firstNew = items.find((item) => !introduced.has(item));
+
+      // Every few questions, a matching board over the weakest items.
+      if (seen.length >= 3 && asked % 5 === 3) {
+        asked++;
+        lastItem = lastKind = null;
+        return boardQuestion(shuffled(seen).sort((a, b) => strengthOf(a) - strengthOf(b)).slice(0, 4));
+      }
+
+      let candidates = seen.map((item) => [item, 6 - strengthOf(item)]);
+      if (firstNew) candidates.push([firstNew, seen.length === 0 ? 1 : 3]);
+      if (candidates.length > 1) candidates = candidates.filter(([item]) => item !== lastItem);
+      let roll = Math.random() * candidates.reduce((sum, [, weight]) => sum + weight, 0);
+      const item = candidates.find(([, weight]) => (roll -= weight) < 0)?.[0] ?? candidates[0][0];
+      lastItem = item;
+      if (!introduced.has(item)) return introQuestion(item);
+
+      asked++;
+      let kinds;
+      if (isMark) kinds = [readQuestion, spellingQuestion];
+      else if (strengthOf(item) === 0) kinds = [meaningQuestion];
+      else if (isPhrase) {
+        kinds = [meaningQuestion, arabicQuestion, orderQuestion, orderQuestion, gapQuestion];
+        if (canSpeak()) kinds.push(listenQuestion);
+      } else {
+        kinds = [meaningQuestion, arabicQuestion, readQuestion, spellingQuestion];
+        if (canSpeak()) kinds.push(listenQuestion, listenQuestion);
+        const letters = Array.from(stripMarks(item.ar)).length;
+        if (letters >= 2 && letters <= 9) kinds.push(buildQuestion, buildQuestion);
+      }
+      // The same kind of question does not come twice running.
+      if (kinds.length > 1) kinds = kinds.filter((kind) => kind !== lastKind);
+      lastKind = pick(kinds);
+      lastKind(item);
     }
 
     next();
@@ -622,7 +1054,7 @@ export function createPractice(ctx) {
         h(
           "div",
           { class: `feedback answer${isQuranic(card) ? " quranic" : ""}` },
-          h("p", { class: correct ? "ok" : "error" }, correct ? pick(["Correct.", "Yes.", "That's it.", "Right."]) : "Not quite. Here it is:"),
+          h("p", { class: correct ? "ok" : "error" }, correct ? pick(PRAISE) : "Not quite. Here it is:"),
           wordHead(card),
           h("p", { class: "panel-translit" }, card.translit),
           h("p", { class: "panel-meaning" }, card.meaning),
@@ -692,50 +1124,60 @@ export function createPractice(ctx) {
 
     // See the meaning, build the word from its letters.
     function buildQuestion(card) {
-      const target = Array.from(bare(card));
-      let tiles = shuffled(target.map((letter, id) => ({ letter, id })));
-      if (tiles.map((t) => t.letter).join("") === target.join("")) tiles = tiles.reverse();
-      const placed = [];
-      let finished = false;
       const stageCard = frame(card);
-      const built = h("div", { class: "built", lang: "ar", dir: "rtl" });
-      const tileButtons = tiles.map((tile) => h("button", { type: "button", class: "tile", lang: "ar", onclick: () => place(tile) }, tile.letter));
-      const undoButton = iconButton("Remove the last letter", undo, "undo");
-
-      function paint() {
-        // Shown as one word, so the letters join up as they are added.
-        built.replaceChildren(placed.map((t) => t.letter).join("") || " ");
-        built.classList.toggle("empty", placed.length === 0);
-        tiles.forEach((tile, i) => (tileButtons[i].disabled = finished || placed.includes(tile)));
-        undoButton.disabled = finished || placed.length === 0;
-      }
-      function place(tile) {
-        if (finished || placed.includes(tile)) return;
-        placed.push(tile);
-        if (placed.length === target.length) {
-          finished = true;
-          const correct = placed.map((t) => t.letter).join("") === target.join("");
-          built.classList.add(correct ? "right" : "wrong");
-          paint();
-          return reveal(card, correct, stageCard);
-        }
-        paint();
-      }
-      function undo() {
-        if (finished) return;
-        placed.pop();
-        paint();
-      }
-
-      session.keys = { back: undo, choose: (n) => tiles[n] && place(tiles[n]) };
+      const builder = tileBuilder({ target: Array.from(bare(card)), onDone: (correct) => reveal(card, correct, stageCard) });
+      session.keys = builder.keys;
       stageCard.append(
         h("p", { class: "eyebrow" }, "Build the word, first letter first"),
         h("p", { class: "ask-sound" }, card.meaning, " ", iconButton("Listen to this word", () => playCard(card))),
-        h("div", { class: "built-row" }, built, undoButton),
-        h("div", { class: "tiles", dir: "rtl" }, tileButtons),
+        ...builder.elements,
       );
-      paint();
       session.show(stageCard, modeSwitch);
+    }
+
+    // See the sentence with the word taken out, choose the word that belongs there.
+    function gapQuestion(card) {
+      const stageCard = frame(card);
+      const sentence = card.sentence.replace(ayahMark, "");
+      const at = sentence.indexOf(card.word);
+      const gap = h("span", { class: "gap" }, "\u00a0");
+      const answers = choices({
+        options: shuffled([card, ...rivals(card).filter((other) => other.word !== card.word)]),
+        correct: card,
+        label: (option) => h("span", { class: "letter word-option", lang: "ar", dir: "rtl" }, option.word),
+        onPick: (correct) => {
+          gap.textContent = card.word;
+          gap.classList.add(correct ? "right" : "wrong");
+          reveal(card, correct, stageCard);
+        },
+      });
+      session.keys = { choose: answers.choose };
+      stageCard.append(
+        h("p", { class: "eyebrow" }, "Which word is missing?"),
+        h("p", { class: "context gapped", lang: "ar", dir: "rtl" }, sentence.slice(0, at), gap, sentence.slice(at + card.word.length)),
+        h("p", { class: "translation" }, card.sentence_translation),
+        answers.element,
+      );
+      session.show(stageCard, modeSwitch);
+    }
+
+    // Hear the word, choose which one it was.
+    function hearQuestion(card) {
+      const stageCard = frame(card);
+      const answers = choices({
+        options: shuffled([card, ...rivals(card)]),
+        correct: card,
+        label: (option) => h("span", { class: "letter word-option", lang: "ar", dir: "rtl" }, option.vowelled),
+        onPick: (correct) => reveal(card, correct, stageCard),
+      });
+      session.keys = { choose: answers.choose };
+      stageCard.append(
+        h("p", { class: "eyebrow" }, "Listen. Which word did you hear?"),
+        h("button", { class: "listen-btn", type: "button", title: "Play again", "aria-label": "Play again", onclick: () => playCard(card) }, icon("speaker")),
+        answers.element,
+      );
+      session.show(stageCard, modeSwitch);
+      playCard(card, { quiet: true });
     }
 
     // The plain flashcard: think, turn it over, say how well you knew it.
@@ -791,9 +1233,12 @@ export function createPractice(ctx) {
       if (classic) return flipQuestion(card);
 
       const kinds = [meaningQuestion, wordQuestion];
-      if (card.audio || canSpeak(card.mode)) kinds.push(listenQuestion);
+      if (card.audio || canSpeak(card.mode)) kinds.push(listenQuestion, hearQuestion);
       const letters = Array.from(bare(card));
       if (letters.length >= 2 && letters.length <= 9 && !/\s/.test(bare(card))) kinds.push(buildQuestion, buildQuestion);
+      // A gap needs a sentence around the word.
+      const sentence = card.sentence.replace(ayahMark, "");
+      if (sentence.includes(card.word) && sentence.trim() !== card.word) kinds.push(gapQuestion, gapQuestion);
       // A word seen for the first time starts with the gentlest question.
       (card.reps === 0 && !card.lapses ? meaningQuestion : pick(kinds))(card);
     }
@@ -801,5 +1246,5 @@ export function createPractice(ctx) {
     next();
   }
 
-  return { renderAlphabetPractice, renderReview };
+  return { renderAlphabetPractice, renderLesson, renderReview };
 }

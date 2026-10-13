@@ -1,5 +1,6 @@
 import { LETTERS, LETTER_AUDIO, LETTER_SPOKEN, ALPHABET_GROUPS, TRAINER_LETTERS, letterForms } from "./letters.js";
 import { createPractice, unlockedGroups, KNOWN_AT } from "./practice.js";
+import { COURSES } from "./lessons.js";
 
 const view = document.getElementById("view");
 const panel = document.getElementById("panel");
@@ -326,7 +327,8 @@ async function route() {
   closePanel();
   const hash = location.hash.replace(/^#/, "") || "/";
   const textMatch = hash.match(/^\/text\/(\d+)(\?translate)?$/);
-  const current = textMatch || hash === "/" ? "read" : hash.split("/")[1];
+  // The alphabet is one of the things to practise, so it lights the same tab.
+  const current = textMatch || hash === "/" ? "read" : hash.split("/")[1].replace("alphabet", "practice");
   for (const link of document.querySelectorAll("[data-nav]")) {
     link.classList.toggle("active", link.dataset.nav === current);
   }
@@ -339,6 +341,8 @@ async function route() {
     else if (hash === "/settings") await renderSettings(token);
     else if (hash === "/alphabet") await renderAlphabet(token);
     else if (hash === "/alphabet/practice") await renderAlphabetPractice(token);
+    else if (hash === "/practice") await renderPractice(token);
+    else if (hash.startsWith("/practice/")) await renderLesson(token, ...hash.split("/").slice(2, 4));
     else await renderHome(token);
   } catch (err) {
     if (token === renderToken) view.replaceChildren(h("p", { class: "error" }, err.message));
@@ -448,12 +452,12 @@ function progressCard(stats) {
       "div",
       { class: "progress-actions" },
       stats.due > 0 && h("a", { class: "button", href: "#/review" }, `Review ${plural(stats.due, "word")}`),
-      h("a", { class: stats.due > 0 ? "button secondary" : "button", href: "#/alphabet/practice" }, "Practise the alphabet"),
+      h("a", { class: stats.due > 0 ? "button secondary" : "button", href: "#/practice" }, "Practise"),
     ),
     h(
       "div",
       { class: "progress-foot" },
-      h("span", { class: "muted small" }, `Flashcards and letter answers both count. Saved words: ${stats.words}.`),
+      h("span", { class: "muted small" }, `Every practice answer counts. Saved words: ${stats.words}.`),
       goalSelect,
     ),
   );
@@ -788,6 +792,7 @@ async function renderHome(token) {
       "div",
       { class: "steps" },
       step("Learn the letters", "A few minutes in the alphabet trainer.", "#/alphabet/practice"),
+      step("Practise words and phrases", "Vowel marks, everyday words and whole sentences.", "#/practice"),
       step("Read something real", "Paste a text below and tap any word."),
       step("Review your words", "Saved words return just before you forget them."),
     );
@@ -1820,9 +1825,73 @@ async function renderAlphabet(token) {
   );
 }
 
-// ---- Practice rounds (alphabet and word review) live in practice.js ----------
+// ---- Everything there is to practise ------------------------------------------
 
-const { renderAlphabetPractice, renderReview } = createPractice({
+async function renderPractice(token) {
+  const [letters, lessons, stats] = await Promise.all([api("/letters"), api("/lessons"), api("/stats")]);
+  if (token !== renderToken) return;
+  const knownLetters = TRAINER_LETTERS.filter((l) => (letters[l] ?? 0) >= KNOWN_AT).length;
+
+  // A few of the unit's items, as a taste of what is in it.
+  const sample = (course, unit) =>
+    course.kind === "mark"
+      ? unit.items.map((item) => item.write("ب")).join("  ")
+      : unit.items.slice(0, course.kind === "phrase" ? 1 : 3).map((item) => item.ar).join(" · ");
+
+  const unitCard = (course, unit) => {
+    const strengths = lessons[course.id];
+    const learned = unit.items.filter((item) => (strengths[item.id] ?? 0) >= KNOWN_AT).length;
+    const total = unit.items.reduce((sum, item) => sum + (strengths[item.id] ?? 0), 0);
+    return h(
+      "a",
+      { class: `unit-card${learned === unit.items.length ? " done" : ""}`, href: `#/practice/${course.id}/${unit.id}` },
+      h("strong", {}, unit.title),
+      h("span", { class: "unit-sample", lang: "ar", dir: "rtl" }, sample(course, unit)),
+      h("span", { class: "unit-bar" }, h("i", { style: `width: ${(total / (unit.items.length * 5)) * 100}%` })),
+      h("small", {}, learned === unit.items.length ? "All learned" : `${learned} of ${unit.items.length} learned`),
+    );
+  };
+
+  view.replaceChildren(
+    h("h1", {}, "Practise"),
+    h("p", { class: "muted" }, "Short rounds of ten questions. Start anywhere: every unit teaches its own items first, then mixes reading, listening, spelling and matching."),
+    h(
+      "div",
+      { class: "unit-grid" },
+      h(
+        "a",
+        { class: `unit-card${knownLetters === TRAINER_LETTERS.length ? " done" : ""}`, href: "#/alphabet/practice" },
+        h("strong", {}, "The alphabet"),
+        h("span", { class: "unit-sample", lang: "ar", dir: "rtl" }, "ا · ب · ت · ث"),
+        h("span", { class: "unit-bar" }, h("i", { style: `width: ${(knownLetters / TRAINER_LETTERS.length) * 100}%` })),
+        h("small", {}, `${knownLetters} of ${TRAINER_LETTERS.length} letters known`),
+      ),
+      h(
+        "a",
+        { class: "unit-card", href: stats.words ? "#/review" : "#/" },
+        h("strong", {}, "Your saved words"),
+        h("span", {}, stats.words ? "Words you saved while reading, each one just before you would forget it." : "Tap a word while reading and save it to practise it here."),
+        h("small", {}, stats.words ? `${stats.due} due of ${plural(stats.words, "word")}` : "No words saved yet"),
+      ),
+    ),
+    h("p", { class: "muted small" }, h("a", { href: "#/alphabet" }, "See all the letters and their shapes")),
+    ...COURSES.map((course) => {
+      const met = course.units.flatMap((unit) => unit.items).filter((item) => item.id in lessons[course.id]).length;
+      return h(
+        "section",
+        { class: "course" },
+        h("h2", {}, course.title),
+        h("p", { class: "muted" }, course.blurb),
+        h("div", { class: "unit-grid" }, course.units.map((unit) => unitCard(course, unit))),
+        met >= 4 && h("a", { class: "button secondary", href: `#/practice/${course.id}/mixed` }, `Mixed round: all ${met} you have met`),
+      );
+    }),
+  );
+}
+
+// ---- Practice rounds (alphabet, courses and word review) live in practice.js ----
+
+const { renderAlphabetPractice, renderLesson, renderReview } = createPractice({
   h,
   api,
   icon,
@@ -1832,6 +1901,7 @@ const { renderAlphabetPractice, renderReview } = createPractice({
   view,
   settings,
   saveSettings,
+  speak,
   speakLetter,
   playCard,
   canSpeak,

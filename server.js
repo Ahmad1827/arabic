@@ -13,6 +13,7 @@ const { schedule, newCardState, GRADES } = await import("./src/srs.js");
 const { analyzeSentence, readPicture, checkConfig, AnalysisError, MODES } = await import("./src/analyze.js");
 const { streaks } = await import("./src/streak.js");
 const { TRAINER_LETTERS } = await import("./public/letters.js");
+const { COURSES, isLessonItem } = await import("./public/lessons.js");
 const library = await import("./src/library.js");
 const voice = await import("./src/voice.js");
 const documents = await import("./src/documents.js");
@@ -139,6 +140,32 @@ app.post("/api/letters/answer", (req, res) => {
        wrong = wrong + excluded.wrong`,
   ).run(letter, strength, correct ? 1 : 0, correct ? 0 : 1);
   res.json({ strength, progress: progress(req, logActivity(req, "letter")) });
+});
+
+// ---- Courses: vowel marks, words and phrases ---------------------------------
+
+app.get("/api/lessons", (req, res) => {
+  const strengths = Object.fromEntries(COURSES.map((course) => [course.id, {}]));
+  for (const row of db.prepare("SELECT course, item, strength FROM lesson_progress").all()) {
+    if (strengths[row.course]) strengths[row.course][row.item] = row.strength;
+  }
+  res.json(strengths);
+});
+
+app.post("/api/lessons/answer", (req, res) => {
+  const { course, item } = req.body ?? {};
+  if (!isLessonItem(course, item)) throw new HttpError(400, "Unknown exercise.");
+  const correct = req.body.correct === true;
+  const current = db.prepare("SELECT strength FROM lesson_progress WHERE course = ? AND item = ?").get(course, item)?.strength ?? 0;
+  const strength = correct ? Math.min(5, current + 1) : Math.floor(current / 2);
+  db.prepare(
+    `INSERT INTO lesson_progress (course, item, strength, correct, wrong) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (course, item) DO UPDATE SET
+       strength = excluded.strength,
+       correct = correct + excluded.correct,
+       wrong = wrong + excluded.wrong`,
+  ).run(course, item, strength, correct ? 1 : 0, correct ? 0 : 1);
+  res.json({ strength, progress: progress(req, logActivity(req, "lesson")) });
 });
 
 // ---- Texts ----------------------------------------------------------------

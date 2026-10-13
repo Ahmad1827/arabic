@@ -78,6 +78,16 @@ export function openDb(file) {
       wrong    INTEGER NOT NULL
     );
 
+    -- The same for the built-in courses (vowel marks, words, phrases).
+    CREATE TABLE IF NOT EXISTS lesson_progress (
+      course   TEXT NOT NULL,
+      item     TEXT NOT NULL,
+      strength INTEGER NOT NULL,  -- 0 (new) to 5 (known)
+      correct  INTEGER NOT NULL,
+      wrong    INTEGER NOT NULL,
+      PRIMARY KEY (course, item)
+    );
+
     INSERT INTO activity (kind, at)
       SELECT 'review', reviewed_at FROM reviews
       WHERE NOT EXISTS (SELECT 1 FROM activity);

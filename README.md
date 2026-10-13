@@ -2,6 +2,8 @@
 
 Read the Quran, hadith collections, your own PDFs and documents, or any Arabic text you paste, word by word: vowel marks, pronunciation, meaning, root and a letter-by-letter breakdown for every word. Save words and review them with spaced repetition.
 
+The **Practise** page has short exercise rounds that need no AI and no saved words: the alphabet, reading vowel marks, everyday words by topic, and whole phrases. Rounds mix choosing a meaning, reading the vowel marks, listening, spelling a word from its letters, putting a sentence in order, filling a gap and matching pairs.
+
 ## Get it
 
 Download the desktop app from the [Releases page](https://github.com/Ahmad1827/arabic/releases/latest). Nothing else needs installing.
@@ -26,7 +28,7 @@ Texts you paste and hadith are explained word by word by an AI. The app ships wi
 - **Claude with your own API key**: pay-as-you-go, with a key from console.anthropic.com.
 - **Another AI service**: anything with an OpenAI-style chat endpoint, such as OpenAI, Google Gemini, OpenRouter, Groq, or a model running locally with Ollama. You give the address, the model name and, if the service needs one, a key.
 
-Nothing is sent to the AI until you press "Translate and explain" under a sentence or "Translate this page" (automatic translation can be switched on in Settings). Keys are stored only in `data/app.db` on your computer. The Quran, the alphabet trainer and reviewing work without any AI.
+Nothing is sent to the AI until you press "Translate and explain" under a sentence or "Translate this page" (automatic translation can be switched on in Settings). Keys are stored only in `data/app.db` on your computer. The Quran, the Practise page and reviewing work without any AI.
 
 ## Translate a picture
 
@@ -42,9 +44,9 @@ The **Translate a picture** page takes a dropped, chosen or pasted picture (a si
 - `src/documents.js`: reads dropped files (PDF, Word .docx, plain text, pictures). PDF text is rebuilt from where each glyph sits on the page, since Arabic PDFs rarely store their text in reading order. Scanned PDFs and photos of pages have no text inside, so their text is recognised with [Tesseract](https://github.com/naptha/tesseract.js) on your computer (its Arabic data, about 2.5 MB, is downloaded on first use); expect some wrong letters.
 - `src/text.js`: splits text into sentences and words.
 - `src/srs.js`: review scheduling.
-- `public/`: the interface (plain HTML, CSS and JavaScript, no build step). `practice.js` holds the exercise rounds for the alphabet and for reviewing saved words.
+- `public/`: the interface (plain HTML, CSS and JavaScript, no build step). `practice.js` holds the exercise rounds (alphabet, courses, reviewing saved words) and `lessons.js` the built-in courses: vowel marks, words and phrases.
 
-`npm test` runs the tests for text splitting and scheduling.
+`npm test` runs the tests for text splitting, scheduling and the course data.
 
 ## Credits
 
